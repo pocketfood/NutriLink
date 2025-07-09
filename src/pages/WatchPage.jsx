@@ -7,7 +7,7 @@ import { QRCodeCanvas } from 'qrcode.react';
 
 export default function WatchPage() {
   const { id } = useParams();
-  const url = getVideo(id);
+  const videoData = getVideo(id);
   const fullUrl = `${window.location.origin}/v/${id}${window.location.search}`;
   const videoRef = useRef(null);
   const playerRef = useRef(null);
@@ -18,7 +18,7 @@ export default function WatchPage() {
     const initialVolume = parseFloat(params.get('vol')) || 1;
     const shouldLoop = params.get('loop') === 'true';
 
-    if (url && videoRef.current && !playerRef.current) {
+    if (videoData?.url && videoRef.current && !playerRef.current) {
       playerRef.current = videojs(videoRef.current, {
         controls: true,
         autoplay: true,
@@ -28,7 +28,7 @@ export default function WatchPage() {
         height: 405,
         loop: shouldLoop,
         sources: [{
-          src: url,
+          src: videoData.url,
           type: 'video/mp4'
         }]
       });
@@ -44,7 +44,7 @@ export default function WatchPage() {
         playerRef.current = null;
       }
     };
-  }, [url]);
+  }, [videoData]);
 
   const handleCopy = () => {
     navigator.clipboard.writeText(fullUrl);
@@ -52,7 +52,7 @@ export default function WatchPage() {
     setTimeout(() => setCopied(false), 2000);
   };
 
-  if (!url) {
+  if (!videoData) {
     return <div style={{ padding: '2rem', fontFamily: 'Arial, sans-serif', textAlign: 'center' }}>Invalid or expired link.</div>;
   }
 
@@ -63,9 +63,16 @@ export default function WatchPage() {
         <img src="/nutrilink-logo.png" alt="NutriLink Logo" style={{ maxWidth: '180px', marginBottom: '1rem' }} />
       </div>
 
+      {/* Filename */}
+      {videoData.filename && (
+        <h2 style={{ margin: '1rem 0', fontSize: '20px', color: '#222' }}>
+          {videoData.filename}
+        </h2>
+      )}
+
       {/* Video container */}
       <div style={{
-        margin: '2rem auto',
+        margin: '1rem auto',
         background: '#fff',
         borderRadius: '8px',
         boxShadow: '0 0 12px rgba(0,0,0,0.1)',
@@ -77,8 +84,20 @@ export default function WatchPage() {
         </div>
       </div>
 
+      {/* Description */}
+      {videoData.description && (
+        <div style={{
+          maxWidth: '700px',
+          margin: '1rem auto 2rem',
+          fontSize: '14px',
+          color: '#555'
+        }}>
+          {videoData.description}
+        </div>
+      )}
+
       {/* Action buttons */}
-      <div style={{ marginTop: '1.5rem' }}>
+      <div style={{ marginTop: '1rem' }}>
         <button
           onClick={handleCopy}
           style={{
@@ -95,7 +114,7 @@ export default function WatchPage() {
         </button>
 
         <a
-          href={url}
+          href={videoData.url}
           download
           style={{
             padding: '0.5rem 1rem',
@@ -110,7 +129,7 @@ export default function WatchPage() {
         </a>
       </div>
 
-      {/* QR Code block */}
+      {/* QR Code */}
       <div style={{ marginTop: '2rem' }}>
         <p style={{ fontSize: '14px', color: '#444' }}>Scan to share:</p>
         <QRCodeCanvas value={fullUrl} size={128} />
@@ -122,32 +141,29 @@ export default function WatchPage() {
         © 2025 NutriLink
       </div>
 
-      {/* Custom Video.js skin */}
-      <style>
-        {`
-          .nutrilink-player .vjs-control-bar {
-            background: #2f62cc;
-          }
-          .nutrilink-player .vjs-button {
-            color: #fff;
-          }
-          .nutrilink-player .vjs-play-progress,
-          .nutrilink-player .vjs-volume-level {
-            background-color: white;
-          }
-          .nutrilink-player .vjs-big-play-button {
-            background: #2f62cc;
-            border: none;
-            color: white;
-            font-size: 2rem;
-            width: 2.5em;
-            height: 2.5em;
-            top: 45%;
-            left: 45%;
-            border-radius: 50%;
-          }
-        `}
-      </style>
+      <style>{`
+        .nutrilink-player .vjs-control-bar {
+          background: #2f62cc;
+        }
+        .nutrilink-player .vjs-button {
+          color: #fff;
+        }
+        .nutrilink-player .vjs-play-progress,
+        .nutrilink-player .vjs-volume-level {
+          background-color: white;
+        }
+        .nutrilink-player .vjs-big-play-button {
+          background: #2f62cc;
+          border: none;
+          color: white;
+          font-size: 2rem;
+          width: 2.5em;
+          height: 2.5em;
+          top: 45%;
+          left: 45%;
+          border-radius: 50%;
+        }
+      `}</style>
     </div>
   );
 }
