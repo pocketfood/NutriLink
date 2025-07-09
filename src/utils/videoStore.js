@@ -9,15 +9,15 @@ function saveMap(map) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(Array.from(map.entries())));
 }
 
-export function saveVideo(url) {
+export function saveVideo({ url, filename, description }) {
   const map = loadMap();
   const id = Math.random().toString(36).substr(2, 8);
-  map.set(id, url);
+  map.set(id, { url, filename, description });
   saveMap(map);
   return id;
 }
 
 export function getVideo(id) {
   const map = loadMap();
-  return map.get(id);
+  return map.get(id); // returns object: { url, filename, description }
 }
