@@ -21,7 +21,7 @@
 ## 📦 Features
 
 - 📼 Modern video player (powered by Video.js)
-- 🔗 Short vanity links: `nutrilink.vercel.app/v/abc123`
+- 🔗 Short vanity links: `nutrilink-xi.vercel.app/v/abc123`
 - 📥 Download video button
 - 📱 Share via QR code or "Copy Link" button
 - 💾 Fully client-side (no server required — yet)
@@ -30,7 +30,7 @@
 
 ## 🚀 How to Use
 
-1. Visit [nutrilink.vercel.app](https://nutrilink.vercel.app)
+1. Visit [nutrilink-xi.vercel.app](https://nutrilink-xi.vercel.app)
 2. Paste a direct video URL (must be publicly accessible)
    - Example: `https://www.w3schools.com/html/mov_bbb.mp4`
 3. Click **Generate Link**
