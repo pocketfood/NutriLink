@@ -4,6 +4,8 @@ import { saveVideo } from '../utils/videoStore';
 
 export default function HomePage() {
   const [url, setUrl] = useState('');
+  const [volume, setVolume] = useState(1);
+  const [loop, setLoop] = useState(false);
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
 
@@ -12,10 +14,9 @@ export default function HomePage() {
     if (!url) return;
     setLoading(true);
 
-    // Simulate an old-school "upload" effect
     setTimeout(() => {
       const id = saveVideo(url);
-      navigate(`/v/${id}`);
+      navigate(`/v/${id}?vol=${volume}&loop=${loop}`);
     }, 1500);
   };
 
@@ -50,6 +51,31 @@ export default function HomePage() {
             }}
           />
           <br />
+
+          <div style={{ marginBottom: '1rem' }}>
+            <label style={{ fontSize: '14px', marginRight: '0.5rem' }}>Volume:</label>
+            <input
+              type="range"
+              min="0"
+              max="1"
+              step="0.1"
+              value={volume}
+              onChange={(e) => setVolume(parseFloat(e.target.value))}
+              style={{ width: '50%' }}
+            />
+            <span style={{ marginLeft: '0.5rem' }}>{volume}</span>
+          </div>
+
+          <div style={{ marginBottom: '1rem' }}>
+            <label style={{ fontSize: '14px', marginRight: '0.5rem' }}>
+              <input
+                type="checkbox"
+                checked={loop}
+                onChange={(e) => setLoop(e.target.checked)}
+              /> Loop Video
+            </label>
+          </div>
+
           <button
             type="submit"
             disabled={loading}
@@ -67,7 +93,6 @@ export default function HomePage() {
           </button>
         </form>
 
-        {/* Fake Progress Bar */}
         {loading && (
           <div style={{
             marginTop: '1rem',
@@ -89,32 +114,13 @@ export default function HomePage() {
           </div>
         )}
 
-        {/* Instructions */}
-        {!loading && (
-          <div style={{ marginTop: '2rem', fontSize: '14px', color: '#444' }}>
-            <ol style={{ textAlign: 'left', display: 'inline-block' }}>
-              <li><strong>Paste a video URL</strong></li>
-              <li><strong>Share the generated link</strong></li>
-              <li><strong>Watch the video any time</strong></li>
-            </ol>
-            <p><a href="#" style={{ color: '#00f', textDecoration: 'underline' }}>Need help?</a></p>
-          </div>
-        )}
-      </div>
-
-      <div style={{ textAlign: 'center', color: '#888', fontSize: '12px' }}>
-        © 2025 NutriLink. All rights reserved.
-      </div>
-
-      {/* CSS animation keyframes */}
-      <style>
-        {`
+        <style>{`
           @keyframes progress {
             from { transform: translateX(-100%); }
             to { transform: translateX(0); }
           }
-        `}
-      </style>
+        `}</style>
+      </div>
     </div>
   );
 }
