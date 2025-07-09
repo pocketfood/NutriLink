@@ -93,6 +93,7 @@ export default function HomePage() {
           </button>
         </form>
 
+        {/* Fake Progress Bar */}
         {loading && (
           <div style={{
             marginTop: '1rem',
@@ -114,13 +115,32 @@ export default function HomePage() {
           </div>
         )}
 
-        <style>{`
-          @keyframes progress {
-            from { transform: translateX(-100%); }
-            to { transform: translateX(0); }
-          }
-        `}</style>
+        {/* Instructions (Classic Style) */}
+        {!loading && (
+          <div style={{ marginTop: '2rem', fontSize: '14px', color: '#444' }}>
+            <ol style={{ textAlign: 'left', display: 'inline-block', lineHeight: '1.6' }}>
+              <li><strong>Paste a direct video link</strong> (e.g. MP4)</li>
+              <li><strong>Adjust volume & loop options</strong> (optional)</li>
+              <li><strong>Generate a shareable link</strong></li>
+              <li><strong>Send it to your friends!</strong></li>
+            </ol>
+            <p>
+              <a href="/help" style={{ color: '#00f', textDecoration: 'underline' }}>Need help?</a>
+            </p>
+          </div>
+        )}
       </div>
+
+      <div style={{ textAlign: 'center', color: '#888', fontSize: '12px' }}>
+        © 2025 NutriLink. All rights reserved.
+      </div>
+
+      <style>{`
+        @keyframes progress {
+          from { transform: translateX(-100%); }
+          to { transform: translateX(0); }
+        }
+      `}</style>
     </div>
   );
 }
