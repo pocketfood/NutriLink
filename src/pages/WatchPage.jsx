@@ -8,12 +8,16 @@ import { QRCodeCanvas } from 'qrcode.react';
 export default function WatchPage() {
   const { id } = useParams();
   const url = getVideo(id);
-  const fullUrl = `${window.location.origin}/v/${id}`;
+  const fullUrl = `${window.location.origin}/v/${id}${window.location.search}`;
   const videoRef = useRef(null);
   const playerRef = useRef(null);
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const initialVolume = parseFloat(params.get('vol')) || 1;
+    const shouldLoop = params.get('loop') === 'true';
+
     if (url && videoRef.current && !playerRef.current) {
       playerRef.current = videojs(videoRef.current, {
         controls: true,
@@ -22,10 +26,15 @@ export default function WatchPage() {
         fluid: false,
         width: 720,
         height: 405,
+        loop: shouldLoop,
         sources: [{
           src: url,
           type: 'video/mp4'
         }]
+      });
+
+      playerRef.current.ready(() => {
+        playerRef.current.volume(initialVolume);
       });
     }
 
