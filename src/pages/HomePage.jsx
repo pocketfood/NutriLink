@@ -6,6 +6,8 @@ export default function HomePage() {
   const [url, setUrl] = useState('');
   const [volume, setVolume] = useState(1);
   const [loop, setLoop] = useState(false);
+  const [filename, setFilename] = useState('');
+  const [description, setDescription] = useState('');
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
 
@@ -15,7 +17,7 @@ export default function HomePage() {
     setLoading(true);
 
     setTimeout(() => {
-      const id = saveVideo(url);
+      const id = saveVideo({ url, filename, description });
       navigate(`/v/${id}?vol=${volume}&loop=${loop}`);
     }, 1500);
   };
@@ -49,8 +51,38 @@ export default function HomePage() {
               border: '1px solid #ccc',
               borderRadius: '4px'
             }}
-          />
-          <br />
+          /><br />
+
+          <input
+            type="text"
+            placeholder="Enter filename"
+            value={filename}
+            onChange={(e) => setFilename(e.target.value)}
+            style={{
+              width: '80%',
+              padding: '0.5rem',
+              fontSize: '14px',
+              marginBottom: '1rem',
+              border: '1px solid #ccc',
+              borderRadius: '4px'
+            }}
+          /><br />
+
+          <textarea
+            placeholder="Short video description"
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            rows={3}
+            style={{
+              width: '80%',
+              padding: '0.5rem',
+              fontSize: '14px',
+              marginBottom: '1rem',
+              border: '1px solid #ccc',
+              borderRadius: '4px',
+              resize: 'none'
+            }}
+          /><br />
 
           <div style={{ marginBottom: '1rem' }}>
             <label style={{ fontSize: '14px', marginRight: '0.5rem' }}>Volume:</label>
@@ -115,18 +147,15 @@ export default function HomePage() {
           </div>
         )}
 
-        {/* Instructions (Classic Style) */}
         {!loading && (
           <div style={{ marginTop: '2rem', fontSize: '14px', color: '#444' }}>
             <ol style={{ textAlign: 'left', display: 'inline-block', lineHeight: '1.6' }}>
               <li><strong>Paste a direct video link</strong> (e.g. MP4)</li>
+              <li><strong>Enter title & description</strong></li>
               <li><strong>Adjust volume & loop options</strong> (optional)</li>
               <li><strong>Generate a shareable link</strong></li>
-              <li><strong>Send it to your friends!</strong></li>
             </ol>
-            <p>
-              <a href="/help" style={{ color: '#00f', textDecoration: 'underline' }}>Need help?</a>
-            </p>
+            <p><a href="/help" style={{ color: '#00f', textDecoration: 'underline' }}>Need help?</a></p>
           </div>
         )}
       </div>
