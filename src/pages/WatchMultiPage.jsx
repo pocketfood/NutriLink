@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import QRCode from 'react-qr-code';
-import { FaDownload, FaQrcode, FaInfoCircle } from 'react-icons/fa';
+import { FaDownload, FaQrcode, FaVolumeMute, FaVolumeUp } from 'react-icons/fa';
 
 export default function WatchMultiPage() {
   const { id } = useParams();
@@ -10,6 +10,7 @@ export default function WatchMultiPage() {
   const [loop, setLoop] = useState(false);
   const [error, setError] = useState(null);
   const [showQR, setShowQR] = useState(false);
+  const [muted, setMuted] = useState(false);
   const videoRefs = useRef([]);
 
   useEffect(() => {
@@ -29,6 +30,7 @@ export default function WatchMultiPage() {
     fetchVideos();
   }, [id]);
 
+  // Scroll-based autoplay
   useEffect(() => {
     if (!videoRefs.current.length) return;
 
@@ -50,22 +52,43 @@ export default function WatchMultiPage() {
       if (video) observer.observe(video);
     });
 
-    // ✅ Autoplay first video
-    const firstVideo = videoRefs.current[0];
-    if (firstVideo && firstVideo.readyState >= 2) {
-      firstVideo.play().catch(() => {});
-    } else if (firstVideo) {
-      firstVideo.onloadeddata = () => {
-        firstVideo.play().catch(() => {});
-      };
-    }
-
     return () => {
       videoRefs.current.forEach((video) => {
         if (video) observer.unobserve(video);
       });
     };
   }, [videoData]);
+
+  // Autoplay first video on load
+  useEffect(() => {
+    const firstVideo = videoRefs.current[0];
+    if (firstVideo) {
+      const tryPlay = () => {
+        firstVideo.play().catch(() => {});
+      };
+
+      if (firstVideo.readyState >= 2) {
+        tryPlay();
+      } else {
+        firstVideo.addEventListener('loadeddata', tryPlay, { once: true });
+      }
+
+      return () => {
+        firstVideo.removeEventListener('loadeddata', tryPlay);
+      };
+    }
+  }, [videoData]);
+
+  // Mute toggle handler
+  const toggleMute = () => {
+    setMuted((prev) => {
+      const newMuted = !prev;
+      videoRefs.current.forEach((v) => {
+        if (v) v.muted = newMuted;
+      });
+      return newMuted;
+    });
+  };
 
   if (error) {
     return (
@@ -110,7 +133,7 @@ export default function WatchMultiPage() {
             ref={(el) => (videoRefs.current[index] = el)}
             src={vid.url}
             loop={loop}
-            muted={false}
+            muted={muted}
             controls
             playsInline
             preload="auto"
@@ -138,16 +161,16 @@ export default function WatchMultiPage() {
             }}
           />
 
-          {/* Sidebar Buttons (Right Side) */}
+          {/* Sidebar Buttons (Top Right) */}
           <div
             style={{
               position: 'absolute',
-              top: '3%',
+              top: '4%',
               right: '2rem',
               zIndex: 10,
               display: 'flex',
               flexDirection: 'column',
-              gap: '1.4rem',
+              gap: '2rem',
               alignItems: 'center',
               color: 'white',
             }}
@@ -164,24 +187,48 @@ export default function WatchMultiPage() {
               style={{ cursor: 'pointer' }}
               title="Download"
             />
-            <FaInfoCircle
-              size={24}
-              style={{ cursor: 'default' }}
-              title="Info"
-            />
+            {muted ? (
+              <FaVolumeMute
+                size={24}
+                onClick={toggleMute}
+                style={{ cursor: 'pointer' }}
+                title="Unmute"
+              />
+            ) : (
+              <FaVolumeUp
+                size={24}
+                onClick={toggleMute}
+                style={{ cursor: 'pointer' }}
+                title="Mute"
+              />
+            )}
           </div>
 
           {/* Text Overlay (Bottom Left) */}
-          <div style={{
-            position: 'absolute',
-            bottom: '5rem',
-            left: '1rem',
-            color: 'white',
-            zIndex: 10,
-            width: 'calc(100% - 5rem)',
-          }}>
-            {vid.filename && <h3 style={{ margin: 0, fontSize: '1.25rem' }}>{vid.filename}</h3>}
-            {vid.description && <p style={{ margin: '0.5rem 0 0', fontSize: '0.9rem', color: '#ccc' }}>{vid.description}</p>}
+          <div
+            style={{
+              position: 'absolute',
+              bottom: '5rem',
+              left: '1rem',
+              color: 'white',
+              zIndex: 10,
+              width: 'calc(100% - 5rem)',
+            }}
+          >
+            {vid.filename && (
+              <h3 style={{ margin: 0, fontSize: '1.25rem' }}>{vid.filename}</h3>
+            )}
+            {vid.description && (
+              <p
+                style={{
+                  margin: '0.5rem 0 0',
+                  fontSize: '0.9rem',
+                  color: '#ccc',
+                }}
+              >
+                {vid.description}
+              </p>
+            )}
           </div>
         </div>
       ))}
@@ -215,12 +262,14 @@ export default function WatchMultiPage() {
             }}
           >
             <QRCode value={window.location.href} size={180} />
-            <p style={{
-              marginTop: '1rem',
-              fontSize: '0.85rem',
-              color: '#333',
-              wordBreak: 'break-all'
-            }}>
+            <p
+              style={{
+                marginTop: '1rem',
+                fontSize: '0.85rem',
+                color: '#333',
+                wordBreak: 'break-all',
+              }}
+            >
               {window.location.href}
             </p>
           </div>
