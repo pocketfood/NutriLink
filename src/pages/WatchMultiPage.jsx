@@ -12,6 +12,7 @@ export default function WatchMultiPage() {
   const [showQR, setShowQR] = useState(false);
   const [muted, setMuted] = useState(false);
   const videoRefs = useRef([]);
+  const progressRefs = useRef([]);
 
   useEffect(() => {
     async function fetchVideos() {
@@ -30,10 +31,7 @@ export default function WatchMultiPage() {
     fetchVideos();
   }, [id]);
 
-  // Scroll-based autoplay
   useEffect(() => {
-    if (!videoRefs.current.length) return;
-
     const observer = new IntersectionObserver(
       (entries) => {
         entries.forEach((entry) => {
@@ -59,27 +57,21 @@ export default function WatchMultiPage() {
     };
   }, [videoData]);
 
-  // Autoplay first video on load
   useEffect(() => {
-    const firstVideo = videoRefs.current[0];
-    if (firstVideo) {
-      const tryPlay = () => {
-        firstVideo.play().catch(() => {});
-      };
-
-      if (firstVideo.readyState >= 2) {
-        tryPlay();
-      } else {
-        firstVideo.addEventListener('loadeddata', tryPlay, { once: true });
+    const tryPlayFirst = () => {
+      const first = videoRefs.current[0];
+      if (first) {
+        first.muted = muted;
+        const tryPlay = () => first.play().catch(() => {});
+        if (first.readyState >= 2) tryPlay();
+        else first.addEventListener('loadeddata', tryPlay, { once: true });
       }
+    };
 
-      return () => {
-        firstVideo.removeEventListener('loadeddata', tryPlay);
-      };
-    }
-  }, [videoData]);
+    const delay = setTimeout(tryPlayFirst, 500);
+    return () => clearTimeout(delay);
+  }, [videoData, muted]);
 
-  // Mute toggle handler
   const toggleMute = () => {
     setMuted((prev) => {
       const newMuted = !prev;
@@ -88,6 +80,30 @@ export default function WatchMultiPage() {
       });
       return newMuted;
     });
+  };
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      videoRefs.current.forEach((video, i) => {
+        const bar = progressRefs.current[i];
+        if (video && bar) {
+          const percent = (video.currentTime / video.duration) * 100;
+          bar.style.width = `${percent || 0}%`;
+        }
+      });
+    }, 100);
+    return () => clearInterval(interval);
+  }, []);
+
+  const handleSeek = (e, index) => {
+    const video = videoRefs.current[index];
+    const bar = e.currentTarget;
+    const rect = bar.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const percent = x / rect.width;
+    if (video && video.duration) {
+      video.currentTime = percent * video.duration;
+    }
   };
 
   if (error) {
@@ -134,19 +150,25 @@ export default function WatchMultiPage() {
             src={vid.url}
             loop={loop}
             muted={muted}
-            controls
+            controls={false}
             playsInline
             preload="auto"
             onLoadedMetadata={(e) => (e.target.volume = volume)}
+            onClick={() => {
+              const v = videoRefs.current[index];
+              if (v.paused) v.play();
+              else v.pause();
+            }}
             style={{
               width: '100vw',
               height: '100vh',
               objectFit: 'contain',
               backgroundColor: 'black',
+              cursor: 'pointer',
             }}
           />
 
-          {/* NutriLink Logo (Top Left) */}
+          {/* NutriLink Logo */}
           <img
             src="/nutrilink-logo.png"
             alt="NutriLink"
@@ -161,16 +183,16 @@ export default function WatchMultiPage() {
             }}
           />
 
-          {/* Sidebar Buttons (Top Right) */}
+          {/* Sidebar Icons */}
           <div
             style={{
               position: 'absolute',
-              top: '4%',
+              top: '3%',
               right: '2rem',
               zIndex: 10,
               display: 'flex',
               flexDirection: 'column',
-              gap: '2rem',
+              gap: '1.6rem',
               alignItems: 'center',
               color: 'white',
             }}
@@ -204,7 +226,32 @@ export default function WatchMultiPage() {
             )}
           </div>
 
-          {/* Text Overlay (Bottom Left) */}
+          {/* Progress Bar w/ Seek */}
+          <div
+            onClick={(e) => handleSeek(e, index)}
+            style={{
+              position: 'absolute',
+              bottom: 0,
+              left: 0,
+              width: '100%',
+              height: '6px',
+              backgroundColor: '#333',
+              zIndex: 10,
+              cursor: 'pointer',
+            }}
+          >
+            <div
+              ref={(el) => (progressRefs.current[index] = el)}
+              style={{
+                height: '100%',
+                width: '0%',
+                backgroundColor: '#0a1128',
+                transition: 'width 0.1s linear',
+              }}
+            />
+          </div>
+
+          {/* Text Overlay */}
           <div
             style={{
               position: 'absolute',
