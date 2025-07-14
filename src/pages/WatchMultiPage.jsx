@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import QRCode from 'react-qr-code';
+import { FaDownload, FaQrcode, FaInfoCircle } from 'react-icons/fa';
 
 export default function WatchMultiPage() {
   const { id } = useParams();
@@ -28,7 +29,6 @@ export default function WatchMultiPage() {
     fetchVideos();
   }, [id]);
 
-  // Setup observer for play/pause
   useEffect(() => {
     if (!videoRefs.current.length) return;
 
@@ -113,7 +113,7 @@ export default function WatchMultiPage() {
             }}
           />
 
-          {/* NutriLink Logo Overlay (Top Left) */}
+          {/* NutriLink Logo (Top Left) */}
           <img
             src="/nutrilink-logo.png"
             alt="NutriLink"
@@ -128,57 +128,50 @@ export default function WatchMultiPage() {
             }}
           />
 
-          {/* QR Button (Top Right) */}
-          <button
-            onClick={() => setShowQR(true)}
+          {/* Sidebar Buttons (Right Side) */}
+          <div
             style={{
               position: 'absolute',
-              top: '1rem',
+              top: '5%',
               right: '1rem',
               zIndex: 10,
-              backgroundColor: '#111',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '1.4rem',
+              alignItems: 'center',
               color: 'white',
-              padding: '0.4rem 0.6rem',
-              borderRadius: '6px',
-              fontSize: '0.75rem',
-              border: '1px solid white',
-              cursor: 'pointer',
             }}
           >
-            Share
-          </button>
+            <FaQrcode
+              size={24}
+              onClick={() => setShowQR(true)}
+              style={{ cursor: 'pointer' }}
+              title="Share"
+            />
+            <FaDownload
+              size={24}
+              onClick={() => window.open(vid.url, '_blank')}
+              style={{ cursor: 'pointer' }}
+              title="Download"
+            />
+            <FaInfoCircle
+              size={24}
+              style={{ cursor: 'default' }}
+              title="Info"
+            />
+          </div>
 
-          {/* Text + Download (Bottom Overlay) */}
+          {/* Text Overlay (Bottom Left) */}
           <div style={{
             position: 'absolute',
             bottom: '5rem',
             left: '1rem',
             color: 'white',
             zIndex: 10,
-            width: 'calc(100% - 2rem)',
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'flex-end',
+            width: 'calc(100% - 5rem)',
           }}>
-            <div style={{ maxWidth: '75%' }}>
-              {vid.filename && <h3 style={{ margin: 0, fontSize: '1.25rem' }}>{vid.filename}</h3>}
-              {vid.description && <p style={{ margin: '0.5rem 0 0', fontSize: '0.9rem', color: '#ccc' }}>{vid.description}</p>}
-            </div>
-
-            <a
-              href={vid.url}
-              download
-              style={{
-                backgroundColor: '#999',
-                color: 'white',
-                padding: '0.4rem 0.6rem',
-                borderRadius: '6px',
-                fontSize: '0.75rem',
-                textDecoration: 'none',
-              }}
-            >
-              Download
-            </a>
+            {vid.filename && <h3 style={{ margin: 0, fontSize: '1.25rem' }}>{vid.filename}</h3>}
+            {vid.description && <p style={{ margin: '0.5rem 0 0', fontSize: '0.9rem', color: '#ccc' }}>{vid.description}</p>}
           </div>
         </div>
       ))}
@@ -189,7 +182,8 @@ export default function WatchMultiPage() {
           onClick={() => setShowQR(false)}
           style={{
             position: 'fixed',
-            top: 0, left: 0,
+            top: 0,
+            left: 0,
             width: '100vw',
             height: '100vh',
             backgroundColor: 'rgba(0,0,0,0.7)',
