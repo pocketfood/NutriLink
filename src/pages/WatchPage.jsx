@@ -1,103 +1,103 @@
-import { useEffect, useState, useRef } from 'react';
-import { useParams } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { useParams, useSearchParams } from 'react-router-dom';
 
 export default function WatchPage() {
   const { id } = useParams();
+  const [searchParams] = useSearchParams();
   const [videoData, setVideoData] = useState(null);
   const [error, setError] = useState(null);
-  const videoRef = useRef(null);
 
-  const blobBaseUrl = 'https://ogoyhmlvdwypuizr.public.blob.vercel-storage.com';
+  const volume = parseFloat(searchParams.get('vol')) || 1;
+  const loop = searchParams.get('loop') === 'true';
 
   useEffect(() => {
-    const fetchData = async () => {
+    async function fetchVideo() {
       try {
-        const res = await fetch(`${blobBaseUrl}/videos/${id}.json`);
-        if (!res.ok) throw new Error('Video not found');
+        const res = await fetch(`https://ogoyhmlvdwypuizr.public.blob.vercel-storage.com/videos/${id}.json`);
+        if (!res.ok) throw new Error('Video not found or expired');
         const data = await res.json();
         setVideoData(data);
       } catch (err) {
-        setError('Invalid or expired video link.');
+        setError(err.message);
       }
-    };
-    fetchData();
-  }, [id]);
-
-  const handleShare = () => {
-    const shareUrl = window.location.href;
-    navigator.clipboard.writeText(shareUrl);
-    alert('Link copied to clipboard!');
-  };
-
-  const handleDownload = () => {
-    if (videoData?.url) {
-      const a = document.createElement('a');
-      a.href = videoData.url;
-      a.download = videoData.filename || 'video';
-      a.click();
     }
-  };
+
+    fetchVideo();
+  }, [id]);
 
   if (error) {
     return (
-      <div style={{ padding: '2rem', textAlign: 'center', fontFamily: 'Arial' }}>
-        <h2>{error}</h2>
+      <div style={{ textAlign: 'center', marginTop: '2rem' }}>
+        <h2>Error</h2>
+        <p>{error}</p>
       </div>
     );
   }
 
   if (!videoData) {
     return (
-      <div style={{ padding: '2rem', textAlign: 'center', fontFamily: 'Arial' }}>
-        <h2>Loading video...</h2>
+      <div style={{ textAlign: 'center', marginTop: '2rem' }}>
+        <p>Loading video...</p>
       </div>
     );
   }
 
   return (
-    <div style={{ backgroundColor: '#ffffff', minHeight: '100vh', fontFamily: 'Arial, sans-serif', padding: '2rem' }}>
+    <div style={{ fontFamily: 'Arial, sans-serif', backgroundColor: '#fff', minHeight: '100vh', padding: '1rem' }}>
       <div style={{ textAlign: 'center', marginBottom: '1rem' }}>
-        <img src="/nutrilink-logo.png" alt="NutriLink Logo" style={{ maxWidth: '180px' }} />
+        <img src="/nutrilink-logo.png" alt="NutriLink Logo" style={{ maxWidth: '200px' }} />
       </div>
 
-      <div style={{ maxWidth: '720px', margin: '0 auto', background: '#f9f9f9', padding: '1rem', borderRadius: '8px', boxShadow: '0 2px 8px rgba(0,0,0,0.1)' }}>
-        <h2 style={{ fontSize: '18px' }}>{videoData.filename}</h2>
-        <p style={{ fontSize: '14px', color: '#555' }}>{videoData.description}</p>
-
+      <div style={{ maxWidth: '800px', margin: '0 auto', textAlign: 'center' }}>
         <video
-          ref={videoRef}
+          src={videoData.url}
           controls
-          loop={videoData.loop}
-          style={{ width: '100%', margin: '1rem 0', borderRadius: '6px', background: '#000' }}
-          onLoadedMetadata={() => {
-            if (videoRef.current) {
-              videoRef.current.volume = videoData.volume || 1;
-            }
-          }}
-        >
-          <source src={videoData.url} type="video/mp4" />
-          Your browser does not support the video tag.
-        </video>
+          style={{ width: '100%', maxHeight: '500px', borderRadius: '8px' }}
+          volume={volume}
+          loop={loop}
+          autoPlay
+        />
 
-        <div style={{ display: 'flex', justifyContent: 'center', gap: '1rem', marginTop: '1rem' }}>
+        {videoData.filename && (
+          <h2 style={{ marginTop: '1rem', color: '#222' }}>{videoData.filename}</h2>
+        )}
+
+        {videoData.description && (
+          <p style={{ marginTop: '0.5rem', color: '#555', fontSize: '14px' }}>{videoData.description}</p>
+        )}
+
+        <div style={{ marginTop: '1rem' }}>
           <button
-            onClick={handleShare}
-            style={{ padding: '0.5rem 1rem', background: '#2f62cc', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
+            onClick={() => navigator.clipboard.writeText(window.location.href)}
+            style={{
+              padding: '0.4rem 1rem',
+              marginRight: '0.5rem',
+              backgroundColor: '#2f62cc',
+              color: 'white',
+              border: 'none',
+              borderRadius: '4px',
+              cursor: 'pointer',
+              fontSize: '14px'
+            }}
           >
-            Share Link
+            Copy Share Link
           </button>
 
-          <button
-            onClick={handleDownload}
-            style={{ padding: '0.5rem 1rem', background: '#777', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
+          <a
+            href={videoData.url}
+            download
+            style={{
+              padding: '0.4rem 1rem',
+              backgroundColor: '#999',
+              color: 'white',
+              textDecoration: 'none',
+              borderRadius: '4px',
+              fontSize: '14px'
+            }}
           >
             Download Video
-          </button>
+          </a>
         </div>
-      </div>
-
-      <div style={{ textAlign: 'center', marginTop: '2rem', fontSize: '12px', color: '#888' }}>
-        © 2025 NutriLink. All rights reserved.
       </div>
     </div>
   );
