@@ -1,34 +1,24 @@
-// /api/save.js
-import { put } from '@vercel/blob';
-
 export const config = {
-  runtime: 'edge',
+  runtime: 'nodejs',
 };
 
-export default async function handler(req) {
+import { put } from '@vercel/blob';
+
+export default async function handler(req, res) {
   if (req.method !== 'POST') {
-    return new Response('Method Not Allowed', { status: 405 });
+    return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const { url, filename, description, volume, loop } = await req.json();
-  const id = Math.random().toString(36).substr(2, 8);
+  try {
+    const { id, ...data } = req.body;
 
-  const payload = {
-    id,
-    url,
-    filename,
-    description,
-    volume,
-    loop
-  };
+    const blob = await put(`videos/${id}.json`, JSON.stringify(data), {
+      access: 'public',
+      token: process.env.VERCEL_BLOB_RW_TOKEN,
+    });
 
-  const blob = await put(`videos/${id}.json`, JSON.stringify(payload), {
-    access: 'public',
-    contentType: 'application/json',
-    token: process.env.BLOB_READ_WRITE_TOKEN,
-  });
-
-  return new Response(JSON.stringify({ id, blobUrl: blob.url }), {
-    headers: { 'Content-Type': 'application/json' },
-  });
+    return res.status(200).json({ url: blob.url });
+  } catch (err) {
+    return res.status(500).json({ error: 'Failed to save video metadata' });
+  }
 }
