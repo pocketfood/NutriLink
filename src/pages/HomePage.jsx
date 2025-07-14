@@ -16,14 +16,27 @@ export default function HomePage() {
     setLoading(true);
 
     const id = Math.random().toString(36).substring(2, 8);
-    const payload = {
-      id,
-      url,
-      filename,
-      description,
-      volume,
-      loop,
-    };
+
+    // Split on commas to detect multiple links
+    const urls = url.split(',').map(u => u.trim()).filter(Boolean);
+
+    const payload = urls.length > 1
+      ? {
+          id,
+          videos: urls.map(u => ({ url: u })),
+          filename,
+          description,
+          volume,
+          loop,
+        }
+      : {
+          id,
+          url: urls[0],
+          filename,
+          description,
+          volume,
+          loop,
+        };
 
     try {
       const res = await fetch('/api/save', {
@@ -32,7 +45,6 @@ export default function HomePage() {
         body: JSON.stringify(payload),
       });
 
-      // Robust response parsing
       let data;
       try {
         data = await res.json();
@@ -42,7 +54,8 @@ export default function HomePage() {
 
       if (!res.ok) throw new Error(data.error || 'Upload failed');
 
-      navigate(`/v/${id}`);
+      // Redirect based on number of videos
+      navigate(urls.length > 1 ? `/m/${id}` : `/v/${id}`);
     } catch (err) {
       alert('Error saving video: ' + err.message);
     } finally {
@@ -67,7 +80,7 @@ export default function HomePage() {
         <form onSubmit={handleSubmit}>
           <input
             type="text"
-            placeholder="Paste video URL (MP4, WebM...)"
+            placeholder="Paste video URL(s), separate with commas for multiple"
             value={url}
             onChange={(e) => setUrl(e.target.value)}
             style={{
@@ -176,9 +189,9 @@ export default function HomePage() {
         {!loading && (
           <div style={{ marginTop: '2rem', fontSize: '14px', color: '#444' }}>
             <ol style={{ textAlign: 'left', display: 'inline-block', lineHeight: '1.6' }}>
-              <li><strong>Paste a direct video link</strong> (e.g. MP4)</li>
+              <li><strong>Paste direct video link(s)</strong> — use commas to add more</li>
               <li><strong>Enter title & description</strong></li>
-              <li><strong>Adjust volume & loop options</strong> (optional)</li>
+              <li><strong>Adjust volume & loop options</strong></li>
               <li><strong>Generate a shareable link</strong></li>
             </ol>
             <p><a href="/help" style={{ color: '#00f', textDecoration: 'underline' }}>Need help?</a></p>
