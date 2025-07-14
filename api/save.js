@@ -13,14 +13,17 @@ export default async function handler(req, res) {
   try {
     const { id, ...data } = req.body;
 
-    if (!id || !data.url) {
-      return res.status(400).json({ error: 'Missing video ID or URL' });
+    // Support either a single video URL or a list of videos
+    const isMulti = Array.isArray(data.videos);
+    const hasSingle = typeof data.url === 'string';
+
+    if (!id || (!isMulti && !hasSingle)) {
+      return res.status(400).json({ error: 'Missing video ID or URL(s)' });
     }
 
-    // Upload to Blob storage with your token from Vercel env vars
     const blob = await put(`videos/${id}.json`, JSON.stringify(data), {
       access: 'public',
-      token: process.env.VITE_BLOB_RW_TOKEN, // ✅ Make sure this matches your Vercel dashboard
+      token: process.env.VITE_BLOB_RW_TOKEN,
     });
 
     return res.status(200).json({ url: blob.url });
