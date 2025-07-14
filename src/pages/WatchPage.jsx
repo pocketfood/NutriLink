@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
+import { QRCode } from 'qrcode.react';
 
 export default function WatchPage() {
   const { id } = useParams();
@@ -52,10 +53,10 @@ export default function WatchPage() {
         <video
           src={videoData.url}
           controls
-          style={{ width: '100%', maxHeight: '500px', borderRadius: '8px' }}
-          volume={volume}
-          loop={loop}
           autoPlay
+          loop={loop}
+          style={{ width: '100%', maxHeight: '500px', borderRadius: '8px' }}
+          onLoadedMetadata={(e) => (e.target.volume = volume)}
         />
 
         {videoData.filename && (
@@ -97,6 +98,11 @@ export default function WatchPage() {
           >
             Download Video
           </a>
+        </div>
+
+        <div style={{ marginTop: '2rem' }}>
+          <QRCode value={window.location.href} size={128} />
+          <p style={{ marginTop: '0.5rem', color: '#777' }}>Scan to view on another device</p>
         </div>
       </div>
     </div>
