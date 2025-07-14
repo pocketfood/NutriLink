@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import QRCode from 'react-qr-code';
 import { FaDownload, FaQrcode, FaVolumeMute, FaVolumeUp } from 'react-icons/fa';
@@ -31,18 +31,18 @@ export default function WatchPage() {
     const interval = setInterval(() => {
       const video = videoRef.current;
       const bar = progressRef.current;
-      if (video && bar) {
+      if (video && bar && video.duration) {
         const percent = (video.currentTime / video.duration) * 100;
-        bar.style.width = `${percent || 0}%`;
+        bar.style.width = `${percent}%`;
       }
     }, 100);
     return () => clearInterval(interval);
   }, []);
 
   const toggleMute = () => {
-    const newMuted = !muted;
-    setMuted(newMuted);
-    if (videoRef.current) videoRef.current.muted = newMuted;
+    const video = videoRef.current;
+    if (video) video.muted = !muted;
+    setMuted(!muted);
   };
 
   const handleSeek = (e) => {
@@ -76,30 +76,23 @@ export default function WatchPage() {
   const volume = typeof videoData.volume === 'number' ? videoData.volume : 1;
   const loop = videoData.loop === true;
 
-  const renderVideo = (vid) => (
-    <div
-      key={vid.url}
-      style={{
-        position: 'relative',
-        width: '100vw',
-        height: '100vh',
-        backgroundColor: 'black',
-        overflow: 'hidden',
-      }}
-    >
+  return (
+    <div style={{ position: 'relative', width: '100vw', height: '100vh', overflow: 'hidden', backgroundColor: 'black' }}>
       <video
         ref={videoRef}
-        src={vid.url}
+        src={videoData.url}
         autoPlay
         loop={loop}
-        controls={false}
         muted={muted}
+        controls={false}
         playsInline
+        preload="auto"
         onLoadedMetadata={(e) => (e.target.volume = volume)}
         onClick={() => {
-          const v = videoRef.current;
-          if (v.paused) v.play();
-          else v.pause();
+          const video = videoRef.current;
+          if (video) {
+            video.paused ? video.play() : video.pause();
+          }
         }}
         style={{
           width: '100vw',
@@ -109,6 +102,7 @@ export default function WatchPage() {
         }}
       />
 
+      {/* NutriLink Logo */}
       <img
         src="/nutrilink-logo.png"
         alt="NutriLink"
@@ -123,7 +117,7 @@ export default function WatchPage() {
         }}
       />
 
-      {/* Sidebar Icons */}
+      {/* Sidebar Buttons */}
       <div
         style={{
           position: 'absolute',
@@ -137,32 +131,17 @@ export default function WatchPage() {
           color: 'white',
         }}
       >
-        <FaQrcode
-          size={24}
-          onClick={() => setShowQR(true)}
-          style={{ cursor: 'pointer' }}
-          title="Share"
-        />
+        <FaQrcode size={24} onClick={() => setShowQR(true)} style={{ cursor: 'pointer' }} title="Share" />
         <FaDownload
           size={24}
-          onClick={() => window.open(vid.url, '_blank')}
+          onClick={() => window.open(videoData.url, '_blank')}
           style={{ cursor: 'pointer' }}
           title="Download"
         />
         {muted ? (
-          <FaVolumeMute
-            size={24}
-            onClick={toggleMute}
-            style={{ cursor: 'pointer' }}
-            title="Unmute"
-          />
+          <FaVolumeMute size={24} onClick={toggleMute} style={{ cursor: 'pointer' }} title="Unmute" />
         ) : (
-          <FaVolumeUp
-            size={24}
-            onClick={toggleMute}
-            style={{ cursor: 'pointer' }}
-            title="Mute"
-          />
+          <FaVolumeUp size={24} onClick={toggleMute} style={{ cursor: 'pointer' }} title="Mute" />
         )}
       </div>
 
@@ -202,23 +181,11 @@ export default function WatchPage() {
           width: 'calc(100% - 5rem)',
         }}
       >
-        {vid.filename && (
-          <h3 style={{ margin: 0, fontSize: '1.25rem' }}>{vid.filename}</h3>
-        )}
-        {vid.description && (
-          <p style={{ margin: '0.5rem 0 0', fontSize: '0.9rem', color: '#ccc' }}>
-            {vid.description}
-          </p>
+        {videoData.filename && <h3 style={{ margin: 0, fontSize: '1.25rem' }}>{videoData.filename}</h3>}
+        {videoData.description && (
+          <p style={{ margin: '0.5rem 0 0', fontSize: '0.9rem', color: '#ccc' }}>{videoData.description}</p>
         )}
       </div>
-    </div>
-  );
-
-  return (
-    <div style={{ height: '100vh', width: '100vw', backgroundColor: 'black' }}>
-      {Array.isArray(videoData.videos)
-        ? videoData.videos.map(renderVideo)
-        : renderVideo(videoData)}
 
       {/* QR Modal */}
       {showQR && (
