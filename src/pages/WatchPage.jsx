@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
-import QRCode from 'qrcode.react';
+import * as QRCodeReact from 'qrcode.react';
+const QRCode = QRCodeReact.default;
 
 export default function WatchPage() {
   const { id } = useParams();
