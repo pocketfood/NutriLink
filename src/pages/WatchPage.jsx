@@ -1,104 +1,103 @@
-import { useEffect, useState } from 'react';
-import { useParams, useSearchParams } from 'react-router-dom';
+import React, { useEffect, useState } from 'react';
+import { useParams } from 'react-router-dom';
+import { getVideosFromBlob } from '../utils/videoStore';
+import QRCode from 'qrcode.react';
 
 export default function WatchPage() {
   const { id } = useParams();
-  const [searchParams] = useSearchParams();
-  const [videoData, setVideoData] = useState(null);
-  const [error, setError] = useState(null);
-
-  const volume = parseFloat(searchParams.get('vol')) || 1;
-  const loop = searchParams.get('loop') === 'true';
+  const [videos, setVideos] = useState([]);
+  const [volume, setVolume] = useState(1);
+  const [loop, setLoop] = useState(false);
 
   useEffect(() => {
-    async function fetchVideo() {
-      try {
-        const res = await fetch(`https://ogoyhmlvdwypuizr.public.blob.vercel-storage.com/videos/${id}.json`);
-        if (!res.ok) throw new Error('Video not found or expired');
-        const data = await res.json();
-        setVideoData(data);
-      } catch (err) {
-        setError(err.message);
-      }
-    }
+    const fetchData = async () => {
+      const ids = id.split(',');
+      const allVideos = [];
 
-    fetchVideo();
+      for (const singleId of ids) {
+        const data = await getVideosFromBlob(singleId.trim());
+        if (data && data.url) {
+          allVideos.push(data);
+        }
+      }
+
+      const urlParams = new URLSearchParams(window.location.search);
+      setVolume(parseFloat(urlParams.get('vol') || 1));
+      setLoop(urlParams.get('loop') === 'true');
+      setVideos(allVideos);
+    };
+
+    fetchData();
   }, [id]);
 
-  if (error) {
-    return (
-      <div style={{ textAlign: 'center', marginTop: '2rem' }}>
-        <h2>Error</h2>
-        <p>{error}</p>
-      </div>
-    );
-  }
+  const handleDownload = (url) => {
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = '';
+    a.click();
+  };
 
-  if (!videoData) {
-    return (
-      <div style={{ textAlign: 'center', marginTop: '2rem' }}>
-        <p>Loading video...</p>
-      </div>
-    );
-  }
+  const handleShare = (url) => {
+    navigator.clipboard.writeText(window.location.href);
+    alert('Link copied to clipboard!');
+  };
 
   return (
-    <div style={{ fontFamily: 'Arial, sans-serif', backgroundColor: '#fff', minHeight: '100vh', padding: '1rem' }}>
-      <div style={{ textAlign: 'center', marginBottom: '1rem' }}>
-        <img src="/nutrilink-logo.png" alt="NutriLink Logo" style={{ maxWidth: '200px' }} />
-      </div>
-
-      <div style={{ maxWidth: '800px', margin: '0 auto', textAlign: 'center' }}>
-        <video
-          src={videoData.url}
-          controls
-          style={{ width: '100%', maxHeight: '500px', borderRadius: '8px' }}
-          volume={volume}
-          loop={loop}
-          autoPlay
-        />
-
-        {videoData.filename && (
-          <h2 style={{ marginTop: '1rem', color: '#222' }}>{videoData.filename}</h2>
-        )}
-
-        {videoData.description && (
-          <p style={{ marginTop: '0.5rem', color: '#555', fontSize: '14px' }}>{videoData.description}</p>
-        )}
-
-        <div style={{ marginTop: '1rem' }}>
-          <button
-            onClick={() => navigator.clipboard.writeText(window.location.href)}
-            style={{
-              padding: '0.4rem 1rem',
-              marginRight: '0.5rem',
-              backgroundColor: '#2f62cc',
-              color: 'white',
-              border: 'none',
-              borderRadius: '4px',
-              cursor: 'pointer',
-              fontSize: '14px'
+    <div style={{ backgroundColor: '#fff', height: '100vh', overflowY: 'scroll', scrollSnapType: 'y mandatory' }}>
+      {videos.map((video, index) => (
+        <div key={index} style={{ 
+          height: '100vh', 
+          scrollSnapAlign: 'start', 
+          position: 'relative', 
+          display: 'flex', 
+          justifyContent: 'center', 
+          alignItems: 'center',
+          flexDirection: 'column'
+        }}>
+          <video
+            src={video.url}
+            controls
+            loop={loop}
+            autoPlay
+            style={{ 
+              maxHeight: '80vh', 
+              width: 'auto', 
+              borderRadius: '12px',
+              boxShadow: '0 0 10px rgba(0,0,0,0.2)'
             }}
-          >
-            Copy Share Link
-          </button>
+            volume={volume}
+          />
 
-          <a
-            href={videoData.url}
-            download
-            style={{
-              padding: '0.4rem 1rem',
-              backgroundColor: '#999',
-              color: 'white',
-              textDecoration: 'none',
-              borderRadius: '4px',
-              fontSize: '14px'
-            }}
-          >
-            Download Video
-          </a>
+          {/* Overlayed NutriLink Logo */}
+          <img 
+            src="/nutrilink-logo.png" 
+            alt="NutriLink Logo" 
+            style={{ position: 'absolute', top: '10px', left: '10px', height: '40px', opacity: 0.8 }} 
+          />
+
+          {/* Video Info */}
+          <div style={{ marginTop: '1rem', textAlign: 'center' }}>
+            <h3 style={{ margin: 0 }}>{video.filename || 'Untitled Video'}</h3>
+            <p style={{ maxWidth: '80%', margin: '0.5rem auto', color: '#555' }}>{video.description}</p>
+
+            {/* Action Buttons */}
+            <div style={{ marginTop: '1rem' }}>
+              <button 
+                onClick={() => handleDownload(video.url)} 
+                style={{ marginRight: '10px' }}
+              >
+                ⬇ Download
+              </button>
+              <button onClick={() => handleShare(video.url)}>🔗 Share</button>
+            </div>
+
+            {/* QR Code */}
+            <div style={{ marginTop: '1rem' }}>
+              <QRCode value={window.location.href} size={100} />
+            </div>
+          </div>
         </div>
-      </div>
+      ))}
     </div>
   );
 }
