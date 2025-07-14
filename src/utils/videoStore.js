@@ -1,23 +1,35 @@
-const STORAGE_KEY = 'nutrilink_videos';
+// src/utils/videoStore.js
 
-function loadMap() {
-  const raw = localStorage.getItem(STORAGE_KEY);
-  return raw ? new Map(JSON.parse(raw)) : new Map();
+export async function saveVideoToBlob(videoId, data, token) {
+  try {
+    const blobUrl = `https://api.vercel.com/v2/blobs/videos/${videoId}.json`;
+    const response = await fetch(blobUrl, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`
+      },
+      body: JSON.stringify(data)
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to upload video data to blob storage');
+    }
+
+    return await response.json();
+  } catch (error) {
+    console.error('Blob upload failed:', error);
+    throw error;
+  }
 }
 
-function saveMap(map) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(Array.from(map.entries())));
-}
-
-export function saveVideo({ url, filename, description }) {
-  const map = loadMap();
-  const id = Math.random().toString(36).substr(2, 8);
-  map.set(id, { url, filename, description });
-  saveMap(map);
-  return id;
-}
-
-export function getVideo(id) {
-  const map = loadMap();
-  return map.get(id); // returns object: { url, filename, description }
+export async function getVideosFromBlob(id) {
+  try {
+    const response = await fetch(`https://ogoyhmlvdwypuizr.public.blob.vercel-storage.com/videos/${id}.json`);
+    if (!response.ok) throw new Error('Blob fetch failed');
+    return await response.json();
+  } catch (err) {
+    console.error('Failed to fetch video blob:', err);
+    return null;
+  }
 }
