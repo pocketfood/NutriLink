@@ -121,7 +121,7 @@ export default function WatchMultiPage() {
               position: 'absolute',
               top: '0.1rem',
               left: '0.11rem',
-              height: '110px',
+              height: '150px',
               zIndex: 10,
               opacity: 0.95,
               pointerEvents: 'none',
@@ -133,7 +133,7 @@ export default function WatchMultiPage() {
             style={{
               position: 'absolute',
               top: '5%',
-              right: '1rem',
+              right: '2rem',
               zIndex: 10,
               display: 'flex',
               flexDirection: 'column',
