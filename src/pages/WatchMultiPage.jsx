@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import QRCode from 'react-qr-code';
 
@@ -9,6 +9,7 @@ export default function WatchMultiPage() {
   const [loop, setLoop] = useState(false);
   const [error, setError] = useState(null);
   const [showQR, setShowQR] = useState(false);
+  const videoRefs = useRef([]);
 
   useEffect(() => {
     async function fetchVideos() {
@@ -27,9 +28,38 @@ export default function WatchMultiPage() {
     fetchVideos();
   }, [id]);
 
+  // Setup observer for play/pause
+  useEffect(() => {
+    if (!videoRefs.current.length) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          const video = entry.target;
+          if (entry.isIntersecting) {
+            video.play().catch(() => {});
+          } else {
+            video.pause();
+          }
+        });
+      },
+      { threshold: 0.6 }
+    );
+
+    videoRefs.current.forEach((video) => {
+      if (video) observer.observe(video);
+    });
+
+    return () => {
+      videoRefs.current.forEach((video) => {
+        if (video) observer.unobserve(video);
+      });
+    };
+  }, [videoData]);
+
   if (error) {
     return (
-      <div style={{ textAlign: 'center', marginTop: '2rem' }}>
+      <div style={{ textAlign: 'center', marginTop: '2rem', color: 'white' }}>
         <h2>Error</h2>
         <p>{error}</p>
       </div>
@@ -38,7 +68,7 @@ export default function WatchMultiPage() {
 
   if (!videoData.length) {
     return (
-      <div style={{ textAlign: 'center', marginTop: '2rem' }}>
+      <div style={{ textAlign: 'center', marginTop: '2rem', color: 'white' }}>
         <p>Loading videos...</p>
       </div>
     );
@@ -63,20 +93,23 @@ export default function WatchMultiPage() {
             width: '100vw',
             scrollSnapAlign: 'start',
             overflow: 'hidden',
+            backgroundColor: 'black',
           }}
         >
           <video
+            ref={(el) => (videoRefs.current[index] = el)}
             src={vid.url}
-            autoPlay
             loop={loop}
             muted={false}
             controls
             playsInline
+            preload="auto"
             onLoadedMetadata={(e) => (e.target.volume = volume)}
             style={{
-              width: '100%',
-              height: '100%',
-              objectFit: 'cover',
+              width: '100vw',
+              height: '100vh',
+              objectFit: 'contain',
+              backgroundColor: 'black',
             }}
           />
 
@@ -118,7 +151,7 @@ export default function WatchMultiPage() {
           {/* Text + Download (Bottom Overlay) */}
           <div style={{
             position: 'absolute',
-            bottom: '2rem',
+            bottom: '5rem',
             left: '1rem',
             color: 'white',
             zIndex: 10,
