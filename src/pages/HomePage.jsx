@@ -32,7 +32,13 @@ export default function HomePage() {
         body: JSON.stringify(payload),
       });
 
-      const data = await res.json();
+      // Robust response parsing
+      let data;
+      try {
+        data = await res.json();
+      } catch (err) {
+        throw new Error('Received invalid response from server');
+      }
 
       if (!res.ok) throw new Error(data.error || 'Upload failed');
 
