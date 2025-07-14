@@ -231,7 +231,7 @@ export default function WatchMultiPage() {
             onClick={(e) => handleSeek(e, index)}
             style={{
               position: 'absolute',
-              bottom: 25,
+              bottom: 50,
               left: 0,
               width: '100%',
               height: '20px',
