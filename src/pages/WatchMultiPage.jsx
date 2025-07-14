@@ -231,10 +231,10 @@ export default function WatchMultiPage() {
             onClick={(e) => handleSeek(e, index)}
             style={{
               position: 'absolute',
-              bottom: 50,
+              bottom: 10,
               left: 0,
               width: '100%',
-              height: '20px',
+              height: '55px',
               backgroundColor: '#333',
               zIndex: 10,
               cursor: 'pointer',
@@ -245,7 +245,7 @@ export default function WatchMultiPage() {
               style={{
                 height: '100%',
                 width: '0%',
-                backgroundColor: '#0a1128',
+                backgroundColor: '#162557',
                 transition: 'width 0.1s linear',
               }}
             />
