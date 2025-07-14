@@ -1,16 +1,12 @@
 import { useEffect, useState } from 'react';
-import { useParams, useSearchParams } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import QRCode from 'react-qr-code';
 
 export default function WatchPage() {
   const { id } = useParams();
-  const [searchParams] = useSearchParams();
   const [videoData, setVideoData] = useState(null);
   const [error, setError] = useState(null);
   const [showQR, setShowQR] = useState(false);
-
-  const volume = parseFloat(searchParams.get('vol')) || 1;
-  const loop = searchParams.get('loop') === 'true';
 
   useEffect(() => {
     async function fetchVideo() {
@@ -44,6 +40,164 @@ export default function WatchPage() {
     );
   }
 
+  const volume = typeof videoData.volume === 'number' ? videoData.volume : 1;
+  const loop = videoData.loop === true;
+
+  // 📦 If multi-video
+  if (Array.isArray(videoData.videos)) {
+    return (
+      <div
+        style={{
+          height: '100vh',
+          overflowY: 'scroll',
+          scrollSnapType: 'y mandatory',
+          backgroundColor: 'black',
+        }}
+      >
+        {videoData.videos.map((vid, index) => (
+          <div
+            key={index}
+            style={{
+              height: '100vh',
+              width: '100vw',
+              position: 'relative',
+              scrollSnapAlign: 'start',
+              overflow: 'hidden',
+            }}
+          >
+            <video
+              src={vid.url}
+              autoPlay
+              loop={loop}
+              controls
+              muted={false}
+              playsInline
+              onLoadedMetadata={(e) => (e.target.volume = volume)}
+              style={{
+                width: '100vw',
+                height: '100vh',
+                objectFit: 'cover',
+              }}
+            />
+
+            {/* NutriLink Logo */}
+            <img
+              src="/nutrilink-logo.png"
+              alt="NutriLink"
+              style={{
+                position: 'absolute',
+                top: '0.1rem',
+                left: '0.11rem',
+                height: '110px',
+                zIndex: 10,
+                opacity: 0.95,
+                background: 'transparent',
+                pointerEvents: 'none',
+              }}
+            />
+
+            {/* Bottom Info + Buttons */}
+            <div
+              style={{
+                position: 'absolute',
+                bottom: '2rem',
+                left: '1rem',
+                color: 'white',
+                zIndex: 10,
+                width: 'calc(100% - 2rem)',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'flex-end',
+              }}
+            >
+              <div style={{ maxWidth: '75%' }}>
+                {vid.filename && <h3 style={{ margin: 0, fontSize: '1.25rem' }}>{vid.filename}</h3>}
+                {vid.description && (
+                  <p style={{ margin: '0.5rem 0 0', fontSize: '0.9rem', color: '#ccc' }}>{vid.description}</p>
+                )}
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.5rem' }}>
+                <a
+                  href={vid.url}
+                  download
+                  style={{
+                    backgroundColor: '#999',
+                    color: 'white',
+                    padding: '0.4rem 0.6rem',
+                    borderRadius: '6px',
+                    fontSize: '0.75rem',
+                    textDecoration: 'none',
+                  }}
+                >
+                  Download
+                </a>
+                <button
+                  onClick={() => setShowQR(true)}
+                  style={{
+                    backgroundColor: '#111',
+                    color: 'white',
+                    padding: '0.4rem 0.6rem',
+                    borderRadius: '6px',
+                    fontSize: '0.75rem',
+                    border: '1px solid white',
+                    cursor: 'pointer',
+                  }}
+                >
+                  SHARE
+                </button>
+              </div>
+            </div>
+          </div>
+        ))}
+
+        {/* QR Modal */}
+        {showQR && (
+          <div
+            onClick={() => setShowQR(false)}
+            style={{
+              position: 'fixed',
+              top: 0,
+              left: 0,
+              width: '100vw',
+              height: '100vh',
+              backgroundColor: 'rgba(0,0,0,0.7)',
+              display: 'flex',
+              justifyContent: 'center',
+              alignItems: 'center',
+              zIndex: 1000,
+            }}
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                background: '#fff',
+                padding: '1rem',
+                borderRadius: '10px',
+                textAlign: 'center',
+                maxWidth: '90vw',
+                wordBreak: 'break-word',
+              }}
+            >
+              <QRCode value={window.location.href} size={180} />
+              <p
+                style={{
+                  marginTop: '1rem',
+                  fontSize: '0.85rem',
+                  color: '#333',
+                  wordBreak: 'break-all',
+                }}
+              >
+                {window.location.href}
+              </p>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // 🧱 Else: Legacy single-video layout
   return (
     <div style={{ position: 'relative', width: '100vw', height: '100vh', overflow: 'hidden', backgroundColor: 'black' }}>
       <video
@@ -61,7 +215,6 @@ export default function WatchPage() {
         }}
       />
 
-      {/* NutriLink Logo Overlay (Top Left) */}
       <img
         src="/nutrilink-logo.png"
         alt="NutriLink"
@@ -77,21 +230,24 @@ export default function WatchPage() {
         }}
       />
 
-      {/* Text + Buttons (Bottom) */}
-      <div style={{
-        position: 'absolute',
-        bottom: '2rem',
-        left: '1rem',
-        color: 'white',
-        zIndex: 10,
-        width: 'calc(100% - 2rem)',
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'flex-end',
-      }}>
+      <div
+        style={{
+          position: 'absolute',
+          bottom: '2rem',
+          left: '1rem',
+          color: 'white',
+          zIndex: 10,
+          width: 'calc(100% - 2rem)',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'flex-end',
+        }}
+      >
         <div style={{ maxWidth: '75%' }}>
           {videoData.filename && <h3 style={{ margin: 0, fontSize: '1.25rem' }}>{videoData.filename}</h3>}
-          {videoData.description && <p style={{ margin: '0.5rem 0 0', fontSize: '0.9rem', color: '#ccc' }}>{videoData.description}</p>}
+          {videoData.description && (
+            <p style={{ margin: '0.5rem 0 0', fontSize: '0.9rem', color: '#ccc' }}>{videoData.description}</p>
+          )}
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.5rem' }}>
@@ -126,13 +282,13 @@ export default function WatchPage() {
         </div>
       </div>
 
-      {/* QR Modal */}
       {showQR && (
         <div
           onClick={() => setShowQR(false)}
           style={{
             position: 'fixed',
-            top: 0, left: 0,
+            top: 0,
+            left: 0,
             width: '100vw',
             height: '100vh',
             backgroundColor: 'rgba(0,0,0,0.7)',
@@ -154,12 +310,14 @@ export default function WatchPage() {
             }}
           >
             <QRCode value={window.location.href} size={180} />
-            <p style={{
-              marginTop: '1rem',
-              fontSize: '0.85rem',
-              color: '#333',
-              wordBreak: 'break-all'
-            }}>
+            <p
+              style={{
+                marginTop: '1rem',
+                fontSize: '0.85rem',
+                color: '#333',
+                wordBreak: 'break-all',
+              }}
+            >
               {window.location.href}
             </p>
           </div>
