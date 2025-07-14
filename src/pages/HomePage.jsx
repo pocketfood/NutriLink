@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { saveVideo } from '../utils/videoStore';
+import { put } from '@vercel/blob';
 
 export default function HomePage() {
   const [url, setUrl] = useState('');
@@ -11,15 +11,34 @@ export default function HomePage() {
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     if (!url) return;
     setLoading(true);
 
-    setTimeout(() => {
-      const id = saveVideo({ url, filename, description });
-      navigate(`/v/${id}?vol=${volume}&loop=${loop}`);
-    }, 1500);
+    try {
+      const id = Math.random().toString(36).substring(2, 8);
+      const payload = {
+        id,
+        url,
+        filename,
+        description,
+        volume,
+        loop,
+      };
+
+      await put(`videos/${id}.json`, JSON.stringify(payload), {
+        access: 'public',
+        contentType: 'application/json',
+        token: import.meta.env.VITE_BLOB_RW_TOKEN,
+      });
+
+      navigate(`/v/${id}`);
+    } catch (err) {
+      alert('Failed to save video data: ' + err.message);
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
