@@ -1,6 +1,5 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { put } from '@vercel/blob';
 
 export default function HomePage() {
   const [url, setUrl] = useState('');
@@ -16,26 +15,30 @@ export default function HomePage() {
     if (!url) return;
     setLoading(true);
 
-    try {
-      const id = Math.random().toString(36).substring(2, 8);
-      const payload = {
-        id,
-        url,
-        filename,
-        description,
-        volume,
-        loop,
-      };
+    const id = Math.random().toString(36).substring(2, 8);
+    const payload = {
+      id,
+      url,
+      filename,
+      description,
+      volume,
+      loop,
+    };
 
-      await put(`videos/${id}.json`, JSON.stringify(payload), {
-        access: 'public',
-        contentType: 'application/json',
-        token: import.meta.env.VITE_BLOB_RW_TOKEN,
+    try {
+      const res = await fetch('/api/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
       });
+
+      const data = await res.json();
+
+      if (!res.ok) throw new Error(data.error || 'Upload failed');
 
       navigate(`/v/${id}`);
     } catch (err) {
-      alert('Failed to save video data: ' + err.message);
+      alert('Error saving video: ' + err.message);
     } finally {
       setLoading(false);
     }
@@ -53,7 +56,6 @@ export default function HomePage() {
         borderRadius: '6px'
       }}>
         <img src="/nutrilink-logo.png" alt="NutriLink Logo" style={{ maxWidth: '200px', marginBottom: '1rem' }} />
-
         <hr style={{ margin: '1rem 0' }} />
 
         <form onSubmit={handleSubmit}>
@@ -144,7 +146,6 @@ export default function HomePage() {
           </button>
         </form>
 
-        {/* Fake Progress Bar */}
         {loading && (
           <div style={{
             marginTop: '1rem',
