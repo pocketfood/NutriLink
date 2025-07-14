@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
-import QRCode from 'react-qr-code'; // Use this library instead
+import QRCode from 'react-qr-code';
 
 export default function WatchPage() {
   const { id } = useParams();
   const [searchParams] = useSearchParams();
   const [videoData, setVideoData] = useState(null);
   const [error, setError] = useState(null);
+  const [showQR, setShowQR] = useState(false);
 
   const volume = parseFloat(searchParams.get('vol')) || 1;
   const loop = searchParams.get('loop') === 'true';
@@ -44,67 +45,126 @@ export default function WatchPage() {
   }
 
   return (
-    <div style={{ fontFamily: 'Arial, sans-serif', backgroundColor: '#fff', minHeight: '100vh', padding: '1rem' }}>
-      <div style={{ textAlign: 'center', marginBottom: '1rem' }}>
-        <img src="/nutrilink-logo.png" alt="NutriLink Logo" style={{ maxWidth: '200px' }} />
-      </div>
+    <div style={{ position: 'relative', width: '100vw', height: '100vh', overflow: 'hidden', backgroundColor: 'black' }}>
+      <video
+        src={videoData.url}
+        autoPlay
+        loop={loop}
+        controls
+        muted={false}
+        playsInline
+        onLoadedMetadata={(e) => (e.target.volume = volume)}
+        style={{
+          width: '100vw',
+          height: '100vh',
+          objectFit: 'cover',
+        }}
+      />
 
-      <div style={{ maxWidth: '800px', margin: '0 auto', textAlign: 'center' }}>
-        <video
-          src={videoData.url}
-          controls
-          autoPlay
-          loop={loop}
-          style={{ width: '100%', maxHeight: '500px', borderRadius: '8px' }}
-          onLoadedMetadata={(e) => (e.target.volume = volume)}
-        />
+      {/* NutriLink Logo Overlay (Top Left) */}
+      <img
+        src="/nutrilink-logo.png"
+        alt="NutriLink"
+        style={{
+          position: 'absolute',
+          top: '0.1rem',
+          left: '0.11rem',
+          height: '110px',
+          zIndex: 10,
+          opacity: 0.95,
+          background: 'transparent',
+          pointerEvents: 'none',
+        }}
+      />
 
-        {videoData.filename && (
-          <h2 style={{ marginTop: '1rem', color: '#222' }}>{videoData.filename}</h2>
-        )}
+      {/* Text + Buttons (Bottom) */}
+      <div style={{
+        position: 'absolute',
+        bottom: '2rem',
+        left: '1rem',
+        color: 'white',
+        zIndex: 10,
+        width: 'calc(100% - 2rem)',
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'flex-end',
+      }}>
+        <div style={{ maxWidth: '75%' }}>
+          {videoData.filename && <h3 style={{ margin: 0, fontSize: '1.25rem' }}>{videoData.filename}</h3>}
+          {videoData.description && <p style={{ margin: '0.5rem 0 0', fontSize: '0.9rem', color: '#ccc' }}>{videoData.description}</p>}
+        </div>
 
-        {videoData.description && (
-          <p style={{ marginTop: '0.5rem', color: '#555', fontSize: '14px' }}>{videoData.description}</p>
-        )}
-
-        <div style={{ marginTop: '1rem' }}>
-          <button
-            onClick={() => navigator.clipboard.writeText(window.location.href)}
-            style={{
-              padding: '0.4rem 1rem',
-              marginRight: '0.5rem',
-              backgroundColor: '#2f62cc',
-              color: 'white',
-              border: 'none',
-              borderRadius: '4px',
-              cursor: 'pointer',
-              fontSize: '14px'
-            }}
-          >
-            Copy Share Link
-          </button>
-
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.5rem' }}>
           <a
             href={videoData.url}
             download
             style={{
-              padding: '0.4rem 1rem',
               backgroundColor: '#999',
               color: 'white',
+              padding: '0.4rem 0.6rem',
+              borderRadius: '6px',
+              fontSize: '0.75rem',
               textDecoration: 'none',
-              borderRadius: '4px',
-              fontSize: '14px'
             }}
           >
-            Download Video
+            Download
           </a>
-        </div>
-
-        <div style={{ marginTop: '2rem' }}>
-          <QRCode value={window.location.href} size={128} />
-          <p style={{ marginTop: '0.5rem', color: '#777' }}>Scan to view on another device</p>
+          <button
+            onClick={() => setShowQR(true)}
+            style={{
+              backgroundColor: '#111',
+              color: 'white',
+              padding: '0.4rem 0.6rem',
+              borderRadius: '6px',
+              fontSize: '0.75rem',
+              border: '1px solid white',
+              cursor: 'pointer',
+            }}
+          >
+            SHARE
+          </button>
         </div>
       </div>
+
+      {/* QR Modal */}
+      {showQR && (
+        <div
+          onClick={() => setShowQR(false)}
+          style={{
+            position: 'fixed',
+            top: 0, left: 0,
+            width: '100vw',
+            height: '100vh',
+            backgroundColor: 'rgba(0,0,0,0.7)',
+            display: 'flex',
+            justifyContent: 'center',
+            alignItems: 'center',
+            zIndex: 1000,
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: '#fff',
+              padding: '1rem',
+              borderRadius: '10px',
+              textAlign: 'center',
+              maxWidth: '90vw',
+              wordBreak: 'break-word',
+            }}
+          >
+            <QRCode value={window.location.href} size={180} />
+            <p style={{
+              marginTop: '1rem',
+              fontSize: '0.85rem',
+              color: '#333',
+              wordBreak: 'break-all'
+            }}>
+              {window.location.href}
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
