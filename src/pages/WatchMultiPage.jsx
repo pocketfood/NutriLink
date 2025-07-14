@@ -142,7 +142,7 @@ export default function WatchMultiPage() {
           <div
             style={{
               position: 'absolute',
-              top: '12%',
+              top: '3%',
               right: '2rem',
               zIndex: 10,
               display: 'flex',
