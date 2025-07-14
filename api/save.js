@@ -1,5 +1,5 @@
 export const config = {
-  runtime: 'nodejs',
+  runtime: 'nodejs', // Force Serverless runtime (not Edge)
 };
 
 import { put } from '@vercel/blob';
@@ -19,6 +19,7 @@ export default async function handler(req, res) {
 
     return res.status(200).json({ url: blob.url });
   } catch (err) {
+    console.error('Blob save error:', err);
     return res.status(500).json({ error: 'Failed to save video metadata' });
   }
 }
