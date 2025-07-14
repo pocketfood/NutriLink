@@ -50,6 +50,16 @@ export default function WatchMultiPage() {
       if (video) observer.observe(video);
     });
 
+    // ✅ Autoplay first video
+    const firstVideo = videoRefs.current[0];
+    if (firstVideo && firstVideo.readyState >= 2) {
+      firstVideo.play().catch(() => {});
+    } else if (firstVideo) {
+      firstVideo.onloadeddata = () => {
+        firstVideo.play().catch(() => {});
+      };
+    }
+
     return () => {
       videoRefs.current.forEach((video) => {
         if (video) observer.unobserve(video);
@@ -132,7 +142,7 @@ export default function WatchMultiPage() {
           <div
             style={{
               position: 'absolute',
-              top: '5%',
+              top: '12%',
               right: '2rem',
               zIndex: 10,
               display: 'flex',
