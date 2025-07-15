@@ -8,11 +8,9 @@ export default function WatchMultiPage() {
   const navigate = useNavigate();
   const [videoData, setVideoData] = useState([]);
   const [volume, setVolume] = useState(1);
-  const [loop, setLoop] = useState(false);
+  const [muted, setMuted] = useState(false);
   const [error, setError] = useState(null);
   const [showQR, setShowQR] = useState(false);
-  const [muted, setMuted] = useState(false);
-  const [showThanks, setShowThanks] = useState(false);
   const videoRefs = useRef([]);
   const progressRefs = useRef([]);
 
@@ -30,12 +28,9 @@ export default function WatchMultiPage() {
         );
         const flatList = blobs.flat();
         setVideoData(flatList);
-        if (blobs.length > 0) {
-          const sample = blobs.find((b) => b.length > 0)?.[0];
-          if (sample) {
-            setVolume(sample.volume || 1);
-            setLoop(sample.loop || false);
-          }
+        if (flatList.length > 0) {
+          const first = flatList[0];
+          setVolume(typeof first.volume === 'number' ? first.volume : 1);
         }
       } catch (err) {
         setError(err.message);
@@ -105,66 +100,12 @@ export default function WatchMultiPage() {
     });
   };
 
-  const handleVideoEnd = (index) => {
-    if (index === videoData.length - 1) {
-      setShowThanks(true);
-    } else {
-      const next = videoRefs.current[index + 1];
-      if (next) next.scrollIntoView({ behavior: 'smooth' });
-    }
-  };
-
-  useEffect(() => {
-    const first = videoRefs.current[0];
-    if (first) {
-      first.muted = muted;
-      const tryPlay = () => first.play().catch(() => {});
-      if (first.readyState >= 2) tryPlay();
-      else first.addEventListener('loadeddata', tryPlay, { once: true });
-    }
-  }, [videoData, muted]);
-
   if (error) {
     return <div style={{ color: 'white', textAlign: 'center', marginTop: '2rem' }}>{error}</div>;
   }
 
   if (!videoData.length) {
     return <div style={{ color: 'white', textAlign: 'center', marginTop: '2rem' }}>Loading...</div>;
-  }
-
-  if (showThanks) {
-    return (
-      <div
-        style={{
-          height: '100vh',
-          backgroundColor: 'black',
-          color: 'white',
-          display: 'flex',
-          flexDirection: 'column',
-          justifyContent: 'center',
-          alignItems: 'center',
-          textAlign: 'center',
-          padding: '2rem',
-        }}
-      >
-        <h1>Thanks for watching!</h1>
-        <button
-          onClick={() => navigate('/')}
-          style={{
-            marginTop: '2rem',
-            padding: '0.75rem 1.5rem',
-            fontSize: '1rem',
-            backgroundColor: '#162557',
-            color: 'white',
-            border: 'none',
-            borderRadius: '10px',
-            cursor: 'pointer',
-          }}
-        >
-          Back to Home
-        </button>
-      </div>
-    );
   }
 
   return (
@@ -192,24 +133,22 @@ export default function WatchMultiPage() {
           <video
             ref={(el) => (videoRefs.current[index] = el)}
             src={vid.url}
-            loop={false}
             muted={muted}
             controls={false}
             playsInline
             preload="auto"
             onLoadedMetadata={(e) => (e.target.volume = volume)}
-            onEnded={() => handleVideoEnd(index)}
-            onClick={() => {
-              const v = videoRefs.current[index];
-              if (v.paused) v.play();
-              else v.pause();
-            }}
             style={{
               width: '100vw',
               height: '100vh',
               objectFit: 'contain',
               backgroundColor: 'black',
               cursor: 'pointer',
+            }}
+            onClick={() => {
+              const v = videoRefs.current[index];
+              if (v.paused) v.play();
+              else v.pause();
             }}
           />
 
@@ -227,7 +166,6 @@ export default function WatchMultiPage() {
             }}
           />
 
-          {/* Buttons */}
           <div
             style={{
               position: 'absolute',
@@ -255,7 +193,6 @@ export default function WatchMultiPage() {
             )}
           </div>
 
-          {/* Progress Bar */}
           <div
             onClick={(e) => handleSeek(e, index)}
             style={{
@@ -271,16 +208,10 @@ export default function WatchMultiPage() {
           >
             <div
               ref={(el) => (progressRefs.current[index] = el)}
-              style={{
-                height: '100%',
-                width: '0%',
-                backgroundColor: '#162557',
-                transition: 'width 0.1s linear',
-              }}
+              style={{ height: '100%', width: '0%', backgroundColor: '#162557' }}
             />
           </div>
 
-          {/* Video Text Info */}
           <div
             style={{
               position: 'absolute',
@@ -298,6 +229,39 @@ export default function WatchMultiPage() {
           </div>
         </div>
       ))}
+
+      {/* Thanks for watching screen */}
+      <div
+        style={{
+          height: '100vh',
+          width: '100vw',
+          backgroundColor: 'black',
+          scrollSnapAlign: 'start',
+          display: 'flex',
+          flexDirection: 'column',
+          justifyContent: 'center',
+          alignItems: 'center',
+          color: 'white',
+          textAlign: 'center',
+        }}
+      >
+        <h1>Thanks for watching!</h1>
+        <button
+          onClick={() => navigate('/')}
+          style={{
+            marginTop: '2rem',
+            padding: '0.75rem 1.5rem',
+            fontSize: '1rem',
+            backgroundColor: '#162557',
+            color: 'white',
+            border: 'none',
+            borderRadius: '10px',
+            cursor: 'pointer',
+          }}
+        >
+          Back to Home
+        </button>
+      </div>
 
       {showQR && (
         <div
@@ -327,14 +291,7 @@ export default function WatchMultiPage() {
             }}
           >
             <QRCode value={window.location.href} size={180} />
-            <p
-              style={{
-                marginTop: '1rem',
-                fontSize: '0.85rem',
-                color: '#333',
-                wordBreak: 'break-all',
-              }}
-            >
+            <p style={{ marginTop: '1rem', fontSize: '0.85rem', color: '#333', wordBreak: 'break-all' }}>
               {window.location.href}
             </p>
           </div>
