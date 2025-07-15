@@ -1,43 +1,48 @@
 import { useEffect, useState, useRef } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import QRCode from 'react-qr-code';
 import { FaDownload, FaQrcode, FaVolumeMute, FaVolumeUp } from 'react-icons/fa';
 
 export default function WatchMultiPage() {
   const { id } = useParams();
-  const blobIds = id.split(',');
+  const navigate = useNavigate();
   const [videoData, setVideoData] = useState([]);
   const [volume, setVolume] = useState(1);
   const [loop, setLoop] = useState(false);
   const [error, setError] = useState(null);
   const [showQR, setShowQR] = useState(false);
   const [muted, setMuted] = useState(false);
+  const [showThanks, setShowThanks] = useState(false);
   const videoRefs = useRef([]);
   const progressRefs = useRef([]);
 
   useEffect(() => {
-    async function fetchAll() {
-      const combined = [];
-
-      for (const blobId of blobIds) {
-        try {
-          const res = await fetch(`https://ogoyhmlvdwypuizr.public.blob.vercel-storage.com/videos/${blobId}.json`);
-          if (!res.ok) throw new Error('Blob not found');
-          const json = await res.json();
-          if (json.videos) {
-            combined.push(...json.videos);
-          } else if (json.url) {
-            combined.push({ url: json.url, filename: json.filename, description: json.description });
+    async function fetchAllVideos() {
+      try {
+        const ids = id.split(',');
+        const blobs = await Promise.all(
+          ids.map(async (blobId) => {
+            const res = await fetch(`https://ogoyhmlvdwypuizr.public.blob.vercel-storage.com/videos/${blobId}.json`);
+            if (!res.ok) throw new Error('Some video blobs could not be loaded');
+            const json = await res.json();
+            return json.videos || [];
+          })
+        );
+        const flatList = blobs.flat();
+        setVideoData(flatList);
+        if (blobs.length > 0) {
+          const sample = blobs.find((b) => b.length > 0)?.[0];
+          if (sample) {
+            setVolume(sample.volume || 1);
+            setLoop(sample.loop || false);
           }
-        } catch (e) {
-          console.warn(`Failed to load blob ${blobId}`, e);
         }
+      } catch (err) {
+        setError(err.message);
       }
-
-      setVideoData(combined);
     }
 
-    fetchAll();
+    fetchAllVideos();
   }, [id]);
 
   useEffect(() => {
@@ -67,31 +72,6 @@ export default function WatchMultiPage() {
   }, [videoData]);
 
   useEffect(() => {
-    const tryPlayFirst = () => {
-      const first = videoRefs.current[0];
-      if (first) {
-        first.muted = muted;
-        const tryPlay = () => first.play().catch(() => {});
-        if (first.readyState >= 2) tryPlay();
-        else first.addEventListener('loadeddata', tryPlay, { once: true });
-      }
-    };
-
-    const delay = setTimeout(tryPlayFirst, 500);
-    return () => clearTimeout(delay);
-  }, [videoData, muted]);
-
-  const toggleMute = () => {
-    setMuted((prev) => {
-      const newMuted = !prev;
-      videoRefs.current.forEach((v) => {
-        if (v) v.muted = newMuted;
-      });
-      return newMuted;
-    });
-  };
-
-  useEffect(() => {
     const interval = setInterval(() => {
       videoRefs.current.forEach((video, i) => {
         const bar = progressRefs.current[i];
@@ -115,26 +95,74 @@ export default function WatchMultiPage() {
     }
   };
 
+  const toggleMute = () => {
+    setMuted((prev) => {
+      const newMuted = !prev;
+      videoRefs.current.forEach((v) => {
+        if (v) v.muted = newMuted;
+      });
+      return newMuted;
+    });
+  };
+
   const handleVideoEnd = (index) => {
-    const next = videoRefs.current[index + 1];
-    if (next) {
-      next.scrollIntoView({ behavior: 'smooth' });
+    if (index === videoData.length - 1) {
+      setShowThanks(true);
+    } else {
+      const next = videoRefs.current[index + 1];
+      if (next) next.scrollIntoView({ behavior: 'smooth' });
     }
   };
 
+  useEffect(() => {
+    const first = videoRefs.current[0];
+    if (first) {
+      first.muted = muted;
+      const tryPlay = () => first.play().catch(() => {});
+      if (first.readyState >= 2) tryPlay();
+      else first.addEventListener('loadeddata', tryPlay, { once: true });
+    }
+  }, [videoData, muted]);
+
   if (error) {
-    return (
-      <div style={{ textAlign: 'center', marginTop: '2rem', color: 'white' }}>
-        <h2>Error</h2>
-        <p>{error}</p>
-      </div>
-    );
+    return <div style={{ color: 'white', textAlign: 'center', marginTop: '2rem' }}>{error}</div>;
   }
 
   if (!videoData.length) {
+    return <div style={{ color: 'white', textAlign: 'center', marginTop: '2rem' }}>Loading...</div>;
+  }
+
+  if (showThanks) {
     return (
-      <div style={{ textAlign: 'center', marginTop: '2rem', color: 'white' }}>
-        <p>Loading videos...</p>
+      <div
+        style={{
+          height: '100vh',
+          backgroundColor: 'black',
+          color: 'white',
+          display: 'flex',
+          flexDirection: 'column',
+          justifyContent: 'center',
+          alignItems: 'center',
+          textAlign: 'center',
+          padding: '2rem',
+        }}
+      >
+        <h1>Thanks for watching!</h1>
+        <button
+          onClick={() => navigate('/')}
+          style={{
+            marginTop: '2rem',
+            padding: '0.75rem 1.5rem',
+            fontSize: '1rem',
+            backgroundColor: '#162557',
+            color: 'white',
+            border: 'none',
+            borderRadius: '10px',
+            cursor: 'pointer',
+          }}
+        >
+          Back to Home
+        </button>
       </div>
     );
   }
@@ -164,7 +192,7 @@ export default function WatchMultiPage() {
           <video
             ref={(el) => (videoRefs.current[index] = el)}
             src={vid.url}
-            loop={loop}
+            loop={false}
             muted={muted}
             controls={false}
             playsInline
@@ -185,7 +213,6 @@ export default function WatchMultiPage() {
             }}
           />
 
-          {/* NutriLink Logo */}
           <img
             src="/nutrilink-logo.png"
             alt="NutriLink"
@@ -200,7 +227,7 @@ export default function WatchMultiPage() {
             }}
           />
 
-          {/* Sidebar Icons */}
+          {/* Buttons */}
           <div
             style={{
               position: 'absolute',
@@ -214,12 +241,7 @@ export default function WatchMultiPage() {
               color: 'white',
             }}
           >
-            <FaQrcode
-              size={24}
-              onClick={() => setShowQR(true)}
-              style={{ cursor: 'pointer' }}
-              title="Share"
-            />
+            <FaQrcode size={24} onClick={() => setShowQR(true)} style={{ cursor: 'pointer' }} title="Share" />
             <FaDownload
               size={24}
               onClick={() => window.open(vid.url, '_blank')}
@@ -227,23 +249,13 @@ export default function WatchMultiPage() {
               title="Download"
             />
             {muted ? (
-              <FaVolumeMute
-                size={24}
-                onClick={toggleMute}
-                style={{ cursor: 'pointer' }}
-                title="Unmute"
-              />
+              <FaVolumeMute size={24} onClick={toggleMute} style={{ cursor: 'pointer' }} title="Unmute" />
             ) : (
-              <FaVolumeUp
-                size={24}
-                onClick={toggleMute}
-                style={{ cursor: 'pointer' }}
-                title="Mute"
-              />
+              <FaVolumeUp size={24} onClick={toggleMute} style={{ cursor: 'pointer' }} title="Mute" />
             )}
           </div>
 
-          {/* Progress Bar w/ Seek */}
+          {/* Progress Bar */}
           <div
             onClick={(e) => handleSeek(e, index)}
             style={{
@@ -268,7 +280,7 @@ export default function WatchMultiPage() {
             />
           </div>
 
-          {/* Text Overlay */}
+          {/* Video Text Info */}
           <div
             style={{
               position: 'absolute',
@@ -279,25 +291,14 @@ export default function WatchMultiPage() {
               width: 'calc(100% - 5rem)',
             }}
           >
-            {vid.filename && (
-              <h3 style={{ margin: 0, fontSize: '1.25rem' }}>{vid.filename}</h3>
-            )}
+            {vid.filename && <h3 style={{ margin: 0, fontSize: '1.25rem' }}>{vid.filename}</h3>}
             {vid.description && (
-              <p
-                style={{
-                  margin: '0.5rem 0 0',
-                  fontSize: '0.9rem',
-                  color: '#ccc',
-                }}
-              >
-                {vid.description}
-              </p>
+              <p style={{ margin: '0.5rem 0 0', fontSize: '0.9rem', color: '#ccc' }}>{vid.description}</p>
             )}
           </div>
         </div>
       ))}
 
-      {/* QR Modal */}
       {showQR && (
         <div
           onClick={() => setShowQR(false)}
