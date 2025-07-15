@@ -67,19 +67,10 @@ export default function WatchMultiPage() {
         else first.addEventListener('loadeddata', tryPlay, { once: true });
       }
     };
+
     const delay = setTimeout(tryPlayFirst, 500);
     return () => clearTimeout(delay);
   }, [videoData, muted]);
-
-  const toggleMute = () => {
-    setMuted((prev) => {
-      const newMuted = !prev;
-      videoRefs.current.forEach((v) => {
-        if (v) v.muted = newMuted;
-      });
-      return newMuted;
-    });
-  };
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -105,10 +96,20 @@ export default function WatchMultiPage() {
     }
   };
 
-  const scrollToNextVideo = (index) => {
-    const nextVideo = videoRefs.current[index + 1];
-    if (nextVideo) {
-      nextVideo.scrollIntoView({ behavior: 'smooth' });
+  const toggleMute = () => {
+    setMuted((prev) => {
+      const newMuted = !prev;
+      videoRefs.current.forEach((v) => {
+        if (v) v.muted = newMuted;
+      });
+      return newMuted;
+    });
+  };
+
+  const scrollToNext = (index) => {
+    const nextElement = document.getElementById(`vid-${index + 1}`);
+    if (nextElement) {
+      nextElement.scrollIntoView({ behavior: 'smooth' });
     }
   };
 
@@ -142,6 +143,7 @@ export default function WatchMultiPage() {
       {videoData.map((vid, index) => (
         <div
           key={index}
+          id={`vid-${index}`}
           style={{
             position: 'relative',
             height: '100vh',
@@ -154,18 +156,18 @@ export default function WatchMultiPage() {
           <video
             ref={(el) => (videoRefs.current[index] = el)}
             src={vid.url}
-            loop={loop}
+            loop={false}
             muted={muted}
             controls={false}
             playsInline
             preload="auto"
             onLoadedMetadata={(e) => (e.target.volume = volume)}
-            onEnded={() => scrollToNextVideo(index)}
             onClick={() => {
               const v = videoRefs.current[index];
               if (v.paused) v.play();
               else v.pause();
             }}
+            onEnded={() => scrollToNext(index)}
             style={{
               width: '100vw',
               height: '100vh',
@@ -190,7 +192,7 @@ export default function WatchMultiPage() {
             }}
           />
 
-          {/* Sidebar Buttons */}
+          {/* Sidebar Icons */}
           <div
             style={{
               position: 'absolute',
@@ -260,58 +262,3 @@ export default function WatchMultiPage() {
 
           {/* Text Overlay */}
           <div
-            style={{
-              position: 'absolute',
-              bottom: '5rem',
-              left: '1rem',
-              color: 'white',
-              zIndex: 10,
-              width: 'calc(100% - 5rem)',
-            }}
-          >
-            {vid.filename && <h3 style={{ margin: 0, fontSize: '1.25rem' }}>{vid.filename}</h3>}
-            {vid.description && (
-              <p style={{ margin: '0.5rem 0 0', fontSize: '0.9rem', color: '#ccc' }}>{vid.description}</p>
-            )}
-          </div>
-        </div>
-      ))}
-
-      {/* QR Modal */}
-      {showQR && (
-        <div
-          onClick={() => setShowQR(false)}
-          style={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            width: '100vw',
-            height: '100vh',
-            backgroundColor: 'rgba(0,0,0,0.7)',
-            display: 'flex',
-            justifyContent: 'center',
-            alignItems: 'center',
-            zIndex: 1000,
-          }}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              background: '#fff',
-              padding: '1rem',
-              borderRadius: '10px',
-              textAlign: 'center',
-              maxWidth: '90vw',
-              wordBreak: 'break-word',
-            }}
-          >
-            <QRCode value={window.location.href} size={180} />
-            <p style={{ marginTop: '1rem', fontSize: '0.85rem', color: '#333', wordBreak: 'break-all' }}>
-              {window.location.href}
-            </p>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
