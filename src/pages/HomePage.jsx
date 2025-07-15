@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 function HomePage() {
+  const [mode, setMode] = useState('video');
   const [url, setUrl] = useState('');
   const [volume, setVolume] = useState(1);
   const [loop, setLoop] = useState(false);
@@ -18,33 +19,23 @@ function HomePage() {
     const id = Math.random().toString(36).substring(2, 8);
     const urls = url.split(',').map((s) => s.trim()).filter(Boolean);
 
-    let payload;
-
-    if (urls.length === 1) {
-      // single video logic
-      payload = {
-        id,
-        url: urls[0],
-        filename,
-        description,
-        volume,
-        loop,
-      };
-    } else {
-      // multiple video logic
-      const videos = urls.map((u) => ({
-        url: u,
-        filename,
-        description,
-      }));
-
-      payload = {
-        id,
-        videos,
-        volume,
-        loop,
-      };
-    }
+    const payload = urls.length === 1
+      ? {
+          id,
+          url: urls[0],
+          filename,
+          description,
+          volume,
+          loop,
+          type: mode,
+        }
+      : {
+          id,
+          videos: urls.map((u) => ({ url: u, filename, description })),
+          volume,
+          loop,
+          type: mode,
+        };
 
     try {
       const res = await fetch('/api/save', {
@@ -53,45 +44,70 @@ function HomePage() {
         body: JSON.stringify(payload),
       });
 
-      let data;
-      try {
-        data = await res.json();
-      } catch {
-        throw new Error('Invalid server response');
-      }
-
+      const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Upload failed');
 
-      if (urls.length === 1) {
-        navigate(`/v/${id}`);
-      } else {
-        navigate(`/m/${id}`);
-      }
+      navigate(urls.length === 1 ? `/v/${id}` : `/m/${id}`);
     } catch (err) {
-      alert('Error saving video: ' + err.message);
+      alert('Error saving content: ' + err.message);
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div style={{ fontFamily: 'Arial, sans-serif', backgroundColor: '#e7ecf3', minHeight: '100vh', padding: '2rem' }}>
+    <div style={{ fontFamily: 'Arial, sans-serif', backgroundColor: '#e7ecf3', minHeight: '100vh', padding: '1rem' }}>
       <div style={{
         backgroundColor: '#fff',
         maxWidth: '600px',
-        margin: '2rem auto',
-        padding: '2rem',
+        margin: '0rem auto',
+        padding: '1rem',
         boxShadow: '0 0 10px rgba(0,0,0,0.1)',
         textAlign: 'center',
         borderRadius: '6px'
       }}>
-        <img src="/nutrilink-logo.png" alt="NutriLink Logo" style={{ maxWidth: '200px', marginBottom: '1rem' }} />
-        <hr style={{ margin: '1rem 0' }} />
+      <img
+        src="/nutrilink-logo.png"
+        alt="NutriLink Logo"
+        style={{ maxWidth: '300px', marginBottom: '0rem', marginTop: '-4rem' }}
+      />
+
+      <hr style={{ margin: '-3.8rem 0 0.3rem' }} />
+
+
+        {/* Mode Switch Links */}
+        <div style={{ marginBottom: '4rem', fontSize: '14px' }}>
+          <span
+            onClick={() => setMode('video')}
+            style={{
+              cursor: 'pointer',
+              marginRight: '1rem',
+              textDecoration: mode === 'video' ? 'underline' : 'none',
+              fontWeight: mode === 'video' ? 'bold' : 'normal',
+              color: mode === 'video' ? '#2f62cc' : '#666',
+            }}
+          >
+            Video
+          </span>
+          <span
+            onClick={() => setMode('audio')}
+            style={{
+              cursor: 'pointer',
+              textDecoration: mode === 'audio' ? 'underline' : 'none',
+              fontWeight: mode === 'audio' ? 'bold' : 'normal',
+              color: mode === 'audio' ? '#2f62cc' : '#666',
+            }}
+          >
+            Audio
+          </span>
+        </div>
 
         <form onSubmit={handleSubmit}>
           <input
             type="text"
-            placeholder="Paste video URL(s) — separate with commas for multiple"
+            placeholder={mode === 'audio'
+              ? 'Paste audio URL(s) — separate with commas for multiple'
+              : 'Paste video URL(s) — separate with commas for multiple'}
             value={url}
             onChange={(e) => setUrl(e.target.value)}
             style={{
@@ -120,7 +136,7 @@ function HomePage() {
           /><br />
 
           <textarea
-            placeholder="Short video description"
+            placeholder="Short description"
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             rows={3}
@@ -155,7 +171,7 @@ function HomePage() {
                 type="checkbox"
                 checked={loop}
                 onChange={(e) => setLoop(e.target.checked)}
-              /> Loop Video
+              /> Loop {mode === 'audio' ? 'Audio' : 'Video'}
             </label>
           </div>
 
@@ -172,7 +188,7 @@ function HomePage() {
               cursor: loading ? 'not-allowed' : 'pointer'
             }}
           >
-            {loading ? 'Uploading...' : 'Generate Link'}
+            {loading ? 'Uploading...' : `Generate ${mode === 'audio' ? 'Audio' : 'Video'} Link`}
           </button>
         </form>
 
@@ -200,7 +216,7 @@ function HomePage() {
         {!loading && (
           <div style={{ marginTop: '2rem', fontSize: '14px', color: '#444' }}>
             <ol style={{ textAlign: 'left', display: 'inline-block', lineHeight: '1.6' }}>
-              <li><strong>Paste a direct video link</strong> (e.g. MP4)</li>
+              <li><strong>Paste a direct {mode} link</strong> (e.g. {mode === 'audio' ? 'MP3' : 'MP4'})</li>
               <li><strong>Use commas to separate multiple links</strong></li>
               <li><strong>Enter title & description</strong></li>
               <li><strong>Adjust volume & loop</strong> (optional)</li>
