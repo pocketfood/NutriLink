@@ -262,3 +262,108 @@ export default function WatchMultiPage() {
 
           {/* Text Overlay */}
           <div
+            style={{
+              position: 'absolute',
+              bottom: '5rem',
+              left: '1rem',
+              color: 'white',
+              zIndex: 10,
+              width: 'calc(100% - 5rem)',
+            }}
+          >
+            {vid.filename && (
+              <h3 style={{ margin: 0, fontSize: '1.25rem' }}>{vid.filename}</h3>
+            )}
+            {vid.description && (
+              <p
+                style={{
+                  margin: '0.5rem 0 0',
+                  fontSize: '0.9rem',
+                  color: '#ccc',
+                }}
+              >
+                {vid.description}
+              </p>
+            )}
+          </div>
+        </div>
+      ))}
+
+      {/* Final "Thanks" Page */}
+      <div
+        id={`vid-${videoData.length}`}
+        style={{
+          height: '100vh',
+          width: '100vw',
+          scrollSnapAlign: 'start',
+          backgroundColor: 'black',
+          color: 'white',
+          display: 'flex',
+          flexDirection: 'column',
+          justifyContent: 'center',
+          alignItems: 'center',
+        }}
+      >
+        <h1 style={{ fontSize: '2rem', marginBottom: '1rem' }}>Thanks for watching!</h1>
+        <button
+          onClick={() => window.location.href = '/'}
+          style={{
+            backgroundColor: '#162557',
+            color: 'white',
+            border: 'none',
+            padding: '0.75rem 1.5rem',
+            fontSize: '1rem',
+            borderRadius: '8px',
+            cursor: 'pointer',
+            transition: 'background-color 0.2s',
+          }}
+        >
+          Back to Home
+        </button>
+      </div>
+
+      {/* QR Modal */}
+      {showQR && (
+        <div
+          onClick={() => setShowQR(false)}
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            width: '100vw',
+            height: '100vh',
+            backgroundColor: 'rgba(0,0,0,0.7)',
+            display: 'flex',
+            justifyContent: 'center',
+            alignItems: 'center',
+            zIndex: 1000,
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: '#fff',
+              padding: '1rem',
+              borderRadius: '10px',
+              textAlign: 'center',
+              maxWidth: '90vw',
+              wordBreak: 'break-word',
+            }}
+          >
+            <QRCode value={window.location.href} size={180} />
+            <p
+              style={{
+                marginTop: '1rem',
+                fontSize: '0.85rem',
+                color: '#333',
+                wordBreak: 'break-all',
+              }}
+            >
+              {window.location.href}
+            </p>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
