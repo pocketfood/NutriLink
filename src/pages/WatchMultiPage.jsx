@@ -5,6 +5,7 @@ import { FaDownload, FaQrcode, FaVolumeMute, FaVolumeUp } from 'react-icons/fa';
 
 export default function WatchMultiPage() {
   const { id } = useParams();
+  const blobIds = id.split(',');
   const [videoData, setVideoData] = useState([]);
   const [volume, setVolume] = useState(1);
   const [loop, setLoop] = useState(false);
@@ -15,20 +16,28 @@ export default function WatchMultiPage() {
   const progressRefs = useRef([]);
 
   useEffect(() => {
-    async function fetchVideos() {
-      try {
-        const res = await fetch(`https://ogoyhmlvdwypuizr.public.blob.vercel-storage.com/videos/${id}.json`);
-        if (!res.ok) throw new Error('Video not found or expired');
-        const data = await res.json();
-        setVideoData(data.videos || []);
-        setVolume(data.volume || 1);
-        setLoop(data.loop || false);
-      } catch (err) {
-        setError(err.message);
+    async function fetchAll() {
+      const combined = [];
+
+      for (const blobId of blobIds) {
+        try {
+          const res = await fetch(`https://ogoyhmlvdwypuizr.public.blob.vercel-storage.com/videos/${blobId}.json`);
+          if (!res.ok) throw new Error('Blob not found');
+          const json = await res.json();
+          if (json.videos) {
+            combined.push(...json.videos);
+          } else if (json.url) {
+            combined.push({ url: json.url, filename: json.filename, description: json.description });
+          }
+        } catch (e) {
+          console.warn(`Failed to load blob ${blobId}`, e);
+        }
       }
+
+      setVideoData(combined);
     }
 
-    fetchVideos();
+    fetchAll();
   }, [id]);
 
   useEffect(() => {
@@ -72,6 +81,16 @@ export default function WatchMultiPage() {
     return () => clearTimeout(delay);
   }, [videoData, muted]);
 
+  const toggleMute = () => {
+    setMuted((prev) => {
+      const newMuted = !prev;
+      videoRefs.current.forEach((v) => {
+        if (v) v.muted = newMuted;
+      });
+      return newMuted;
+    });
+  };
+
   useEffect(() => {
     const interval = setInterval(() => {
       videoRefs.current.forEach((video, i) => {
@@ -96,20 +115,10 @@ export default function WatchMultiPage() {
     }
   };
 
-  const toggleMute = () => {
-    setMuted((prev) => {
-      const newMuted = !prev;
-      videoRefs.current.forEach((v) => {
-        if (v) v.muted = newMuted;
-      });
-      return newMuted;
-    });
-  };
-
-  const scrollToNext = (index) => {
-    const nextElement = document.getElementById(`vid-${index + 1}`);
-    if (nextElement) {
-      nextElement.scrollIntoView({ behavior: 'smooth' });
+  const handleVideoEnd = (index) => {
+    const next = videoRefs.current[index + 1];
+    if (next) {
+      next.scrollIntoView({ behavior: 'smooth' });
     }
   };
 
@@ -143,7 +152,6 @@ export default function WatchMultiPage() {
       {videoData.map((vid, index) => (
         <div
           key={index}
-          id={`vid-${index}`}
           style={{
             position: 'relative',
             height: '100vh',
@@ -156,18 +164,18 @@ export default function WatchMultiPage() {
           <video
             ref={(el) => (videoRefs.current[index] = el)}
             src={vid.url}
-            loop={false}
+            loop={loop}
             muted={muted}
             controls={false}
             playsInline
             preload="auto"
             onLoadedMetadata={(e) => (e.target.volume = volume)}
+            onEnded={() => handleVideoEnd(index)}
             onClick={() => {
               const v = videoRefs.current[index];
               if (v.paused) v.play();
               else v.pause();
             }}
-            onEnded={() => scrollToNext(index)}
             style={{
               width: '100vw',
               height: '100vh',
@@ -235,7 +243,7 @@ export default function WatchMultiPage() {
             )}
           </div>
 
-          {/* Progress Bar */}
+          {/* Progress Bar w/ Seek */}
           <div
             onClick={(e) => handleSeek(e, index)}
             style={{
@@ -288,39 +296,6 @@ export default function WatchMultiPage() {
           </div>
         </div>
       ))}
-
-      {/* Final "Thanks" Page */}
-      <div
-        id={`vid-${videoData.length}`}
-        style={{
-          height: '100vh',
-          width: '100vw',
-          scrollSnapAlign: 'start',
-          backgroundColor: 'black',
-          color: 'white',
-          display: 'flex',
-          flexDirection: 'column',
-          justifyContent: 'center',
-          alignItems: 'center',
-        }}
-      >
-        <h1 style={{ fontSize: '2rem', marginBottom: '1rem' }}>Thanks for watching!</h1>
-        <button
-          onClick={() => window.location.href = '/'}
-          style={{
-            backgroundColor: '#162557',
-            color: 'white',
-            border: 'none',
-            padding: '0.75rem 1.5rem',
-            fontSize: '1rem',
-            borderRadius: '8px',
-            cursor: 'pointer',
-            transition: 'background-color 0.2s',
-          }}
-        >
-          Back to Home
-        </button>
-      </div>
 
       {/* QR Modal */}
       {showQR && (
