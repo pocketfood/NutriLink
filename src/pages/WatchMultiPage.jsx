@@ -58,29 +58,16 @@ export default function WatchMultiPage() {
   }, [videoData]);
 
   useEffect(() => {
-    const autoplayFirstVideo = () => {
+    const tryPlayFirst = () => {
       const first = videoRefs.current[0];
-      if (!first) return;
-
-      first.muted = muted;
-
-      const tryPlay = () => {
-        const playPromise = first.play();
-        if (playPromise !== undefined) {
-          playPromise.catch((e) => {
-            console.warn('Autoplay blocked:', e.message);
-          });
-        }
-      };
-
-      if (first.readyState >= 2) {
-        tryPlay();
-      } else {
-        first.addEventListener('loadeddata', tryPlay, { once: true });
+      if (first) {
+        first.muted = muted;
+        const tryPlay = () => first.play().catch(() => {});
+        if (first.readyState >= 2) tryPlay();
+        else first.addEventListener('loadeddata', tryPlay, { once: true });
       }
     };
-
-    const delay = setTimeout(autoplayFirstVideo, 300);
+    const delay = setTimeout(tryPlayFirst, 500);
     return () => clearTimeout(delay);
   }, [videoData, muted]);
 
@@ -115,6 +102,13 @@ export default function WatchMultiPage() {
     const percent = x / rect.width;
     if (video && video.duration) {
       video.currentTime = percent * video.duration;
+    }
+  };
+
+  const scrollToNextVideo = (index) => {
+    const nextVideo = videoRefs.current[index + 1];
+    if (nextVideo) {
+      nextVideo.scrollIntoView({ behavior: 'smooth' });
     }
   };
 
@@ -166,6 +160,7 @@ export default function WatchMultiPage() {
             playsInline
             preload="auto"
             onLoadedMetadata={(e) => (e.target.volume = volume)}
+            onEnded={() => scrollToNextVideo(index)}
             onClick={() => {
               const v = videoRefs.current[index];
               if (v.paused) v.play();
@@ -180,6 +175,7 @@ export default function WatchMultiPage() {
             }}
           />
 
+          {/* NutriLink Logo */}
           <img
             src="/nutrilink-logo.png"
             alt="NutriLink"
@@ -194,6 +190,7 @@ export default function WatchMultiPage() {
             }}
           />
 
+          {/* Sidebar Buttons */}
           <div
             style={{
               position: 'absolute',
@@ -236,6 +233,7 @@ export default function WatchMultiPage() {
             )}
           </div>
 
+          {/* Progress Bar */}
           <div
             onClick={(e) => handleSeek(e, index)}
             style={{
@@ -260,6 +258,7 @@ export default function WatchMultiPage() {
             />
           </div>
 
+          {/* Text Overlay */}
           <div
             style={{
               position: 'absolute',
@@ -270,18 +269,15 @@ export default function WatchMultiPage() {
               width: 'calc(100% - 5rem)',
             }}
           >
-            {vid.filename && (
-              <h3 style={{ margin: 0, fontSize: '1.25rem' }}>{vid.filename}</h3>
-            )}
+            {vid.filename && <h3 style={{ margin: 0, fontSize: '1.25rem' }}>{vid.filename}</h3>}
             {vid.description && (
-              <p style={{ margin: '0.5rem 0 0', fontSize: '0.9rem', color: '#ccc' }}>
-                {vid.description}
-              </p>
+              <p style={{ margin: '0.5rem 0 0', fontSize: '0.9rem', color: '#ccc' }}>{vid.description}</p>
             )}
           </div>
         </div>
       ))}
 
+      {/* QR Modal */}
       {showQR && (
         <div
           onClick={() => setShowQR(false)}
@@ -310,14 +306,7 @@ export default function WatchMultiPage() {
             }}
           >
             <QRCode value={window.location.href} size={180} />
-            <p
-              style={{
-                marginTop: '1rem',
-                fontSize: '0.85rem',
-                color: '#333',
-                wordBreak: 'break-all',
-              }}
-            >
+            <p style={{ marginTop: '1rem', fontSize: '0.85rem', color: '#333', wordBreak: 'break-all' }}>
               {window.location.href}
             </p>
           </div>
