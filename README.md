@@ -48,7 +48,7 @@
 ## 🛠 Local Development
 
 ```bash
-git clone [https://github.com/pocketfood/nutrilink.git](https://github.com/pocketfood/NutriLink.git)
+git clone https://github.com/pocketfood/nutrilink.git
 cd nutrilink
 npm install
 npm run dev
