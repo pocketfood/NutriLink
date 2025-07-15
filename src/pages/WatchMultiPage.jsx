@@ -58,17 +58,29 @@ export default function WatchMultiPage() {
   }, [videoData]);
 
   useEffect(() => {
-    const tryPlayFirst = () => {
+    const autoplayFirstVideo = () => {
       const first = videoRefs.current[0];
-      if (first) {
-        first.muted = muted;
-        const tryPlay = () => first.play().catch(() => {});
-        if (first.readyState >= 2) tryPlay();
-        else first.addEventListener('loadeddata', tryPlay, { once: true });
+      if (!first) return;
+
+      first.muted = muted;
+
+      const tryPlay = () => {
+        const playPromise = first.play();
+        if (playPromise !== undefined) {
+          playPromise.catch((e) => {
+            console.warn('Autoplay blocked:', e.message);
+          });
+        }
+      };
+
+      if (first.readyState >= 2) {
+        tryPlay();
+      } else {
+        first.addEventListener('loadeddata', tryPlay, { once: true });
       }
     };
 
-    const delay = setTimeout(tryPlayFirst, 500);
+    const delay = setTimeout(autoplayFirstVideo, 300);
     return () => clearTimeout(delay);
   }, [videoData, muted]);
 
@@ -168,7 +180,6 @@ export default function WatchMultiPage() {
             }}
           />
 
-          {/* NutriLink Logo */}
           <img
             src="/nutrilink-logo.png"
             alt="NutriLink"
@@ -183,7 +194,6 @@ export default function WatchMultiPage() {
             }}
           />
 
-          {/* Sidebar Icons */}
           <div
             style={{
               position: 'absolute',
@@ -226,7 +236,6 @@ export default function WatchMultiPage() {
             )}
           </div>
 
-          {/* Progress Bar w/ Seek */}
           <div
             onClick={(e) => handleSeek(e, index)}
             style={{
@@ -251,7 +260,6 @@ export default function WatchMultiPage() {
             />
           </div>
 
-          {/* Text Overlay */}
           <div
             style={{
               position: 'absolute',
@@ -266,13 +274,7 @@ export default function WatchMultiPage() {
               <h3 style={{ margin: 0, fontSize: '1.25rem' }}>{vid.filename}</h3>
             )}
             {vid.description && (
-              <p
-                style={{
-                  margin: '0.5rem 0 0',
-                  fontSize: '0.9rem',
-                  color: '#ccc',
-                }}
-              >
+              <p style={{ margin: '0.5rem 0 0', fontSize: '0.9rem', color: '#ccc' }}>
                 {vid.description}
               </p>
             )}
@@ -280,7 +282,6 @@ export default function WatchMultiPage() {
         </div>
       ))}
 
-      {/* QR Modal */}
       {showQR && (
         <div
           onClick={() => setShowQR(false)}
