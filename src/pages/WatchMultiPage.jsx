@@ -8,6 +8,7 @@ import {
   FaVolumeUp,
   FaInfoCircle,
 } from 'react-icons/fa';
+import Hls from 'hls.js';
 
 export default function WatchMultiPage() {
   const { id } = useParams();
@@ -47,6 +48,36 @@ export default function WatchMultiPage() {
 
     fetchAllVideos();
   }, [id]);
+
+  useEffect(() => {
+    videoRefs.current.forEach((video, index) => {
+      const vid = videoData[index];
+      if (!video || !vid || !vid.url) return;
+
+      if (vid.url.endsWith('.m3u8')) {
+        if (Hls.isSupported()) {
+          const hls = new Hls();
+          hls.loadSource(vid.url);
+          hls.attachMedia(video);
+          hls.on(Hls.Events.ERROR, (event, data) => {
+            if (data.fatal) {
+              console.error(`HLS error on video ${index}:`, data);
+            }
+          });
+        } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+          video.src = vid.url;
+        } else {
+          console.error('HLS not supported on this browser');
+        }
+      } else {
+        video.src = vid.url;
+      }
+
+      video.loop = !!vid.loop;
+      video.volume = volume;
+      video.muted = muted;
+    });
+  }, [videoData, volume, muted]);
 
   useEffect(() => {
     const observer = new IntersectionObserver(
@@ -148,23 +179,21 @@ export default function WatchMultiPage() {
         >
           <video
             ref={(el) => (videoRefs.current[index] = el)}
-            src={vid.url}
             muted={muted}
             controls={false}
             playsInline
             preload="auto"
-            onLoadedMetadata={(e) => (e.target.volume = volume)}
+            onClick={() => {
+              const v = videoRefs.current[index];
+              if (v.paused) v.play();
+              else v.pause();
+            }}
             style={{
               width: '100vw',
               height: '100vh',
               objectFit: 'contain',
               backgroundColor: 'black',
               cursor: 'pointer',
-            }}
-            onClick={() => {
-              const v = videoRefs.current[index];
-              if (v.paused) v.play();
-              else v.pause();
             }}
           />
 
@@ -261,7 +290,6 @@ export default function WatchMultiPage() {
         </div>
       ))}
 
-      {/* Thanks screen */}
       <div
         style={{
           height: '100vh',
