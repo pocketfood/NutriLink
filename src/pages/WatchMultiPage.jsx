@@ -1,7 +1,13 @@
 import { useEffect, useState, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import QRCode from 'react-qr-code';
-import { FaDownload, FaQrcode, FaVolumeMute, FaVolumeUp } from 'react-icons/fa';
+import {
+  FaDownload,
+  FaQrcode,
+  FaVolumeMute,
+  FaVolumeUp,
+  FaInfoCircle,
+} from 'react-icons/fa';
 
 export default function WatchMultiPage() {
   const { id } = useParams();
@@ -9,8 +15,10 @@ export default function WatchMultiPage() {
   const [videoData, setVideoData] = useState([]);
   const [volume, setVolume] = useState(1);
   const [muted, setMuted] = useState(false);
-  const [error, setError] = useState(null);
   const [showQR, setShowQR] = useState(false);
+  const [showInfo, setShowInfo] = useState(true);
+  const [error, setError] = useState(null);
+
   const videoRefs = useRef([]);
   const progressRefs = useRef([]);
 
@@ -100,6 +108,14 @@ export default function WatchMultiPage() {
     });
   };
 
+  const handleVolumeChange = (e) => {
+    const newVolume = parseFloat(e.target.value);
+    setVolume(newVolume);
+    videoRefs.current.forEach((v) => {
+      if (v) v.volume = newVolume;
+    });
+  };
+
   if (error) {
     return <div style={{ color: 'white', textAlign: 'center', marginTop: '2rem' }}>{error}</div>;
   }
@@ -162,8 +178,10 @@ export default function WatchMultiPage() {
               height: '150px',
               zIndex: 10,
               opacity: 0.95,
-              pointerEvents: 'none',
+              pointerEvents: 'auto',
+              cursor: 'pointer',
             }}
+            onClick={() => navigate('/')}
           />
 
           <div
@@ -174,23 +192,34 @@ export default function WatchMultiPage() {
               zIndex: 10,
               display: 'flex',
               flexDirection: 'column',
-              gap: '1.6rem',
+              gap: '1.4rem',
               alignItems: 'center',
               color: 'white',
             }}
           >
-            <FaQrcode size={24} onClick={() => setShowQR(true)} style={{ cursor: 'pointer' }} title="Share" />
+            <FaQrcode size={22} onClick={() => setShowQR(true)} style={{ cursor: 'pointer' }} title="Share" />
             <FaDownload
-              size={24}
+              size={22}
               onClick={() => window.open(vid.url, '_blank')}
               style={{ cursor: 'pointer' }}
               title="Download"
             />
+            <FaInfoCircle size={22} onClick={() => setShowInfo((prev) => !prev)} style={{ cursor: 'pointer' }} title="Toggle Info" />
             {muted ? (
-              <FaVolumeMute size={24} onClick={toggleMute} style={{ cursor: 'pointer' }} title="Unmute" />
+              <FaVolumeMute size={22} onClick={toggleMute} style={{ cursor: 'pointer' }} title="Unmute" />
             ) : (
-              <FaVolumeUp size={24} onClick={toggleMute} style={{ cursor: 'pointer' }} title="Mute" />
+              <FaVolumeUp size={22} onClick={toggleMute} style={{ cursor: 'pointer' }} title="Mute" />
             )}
+            <input
+              type="range"
+              min="0"
+              max="1"
+              step="0.01"
+              value={volume}
+              onChange={handleVolumeChange}
+              style={{ width: '80px', transform: 'rotate(270deg)' }}
+              title="Volume"
+            />
           </div>
 
           <div
@@ -212,25 +241,27 @@ export default function WatchMultiPage() {
             />
           </div>
 
-          <div
-            style={{
-              position: 'absolute',
-              bottom: '5rem',
-              left: '1rem',
-              color: 'white',
-              zIndex: 10,
-              width: 'calc(100% - 5rem)',
-            }}
-          >
-            {vid.filename && <h3 style={{ margin: 0, fontSize: '1.25rem' }}>{vid.filename}</h3>}
-            {vid.description && (
-              <p style={{ margin: '0.5rem 0 0', fontSize: '0.9rem', color: '#ccc' }}>{vid.description}</p>
-            )}
-          </div>
+          {showInfo && (
+            <div
+              style={{
+                position: 'absolute',
+                bottom: '5rem',
+                left: '1rem',
+                color: 'white',
+                zIndex: 10,
+                width: 'calc(100% - 5rem)',
+              }}
+            >
+              {vid.filename && <h3 style={{ margin: 0, fontSize: '1.25rem' }}>{vid.filename}</h3>}
+              {vid.description && (
+                <p style={{ margin: '0.5rem 0 0', fontSize: '0.9rem', color: '#ccc' }}>{vid.description}</p>
+              )}
+            </div>
+          )}
         </div>
       ))}
 
-      {/* Thanks for watching screen */}
+      {/* Thanks screen */}
       <div
         style={{
           height: '100vh',
