@@ -1,16 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
+import Hls from 'hls.js';
 import QRCode from 'react-qr-code';
-import { FaDownload, FaQrcode, FaVolumeMute, FaVolumeUp, FaInfoCircle } from 'react-icons/fa';
+import { FaDownload, FaQrcode, FaVolumeMute, FaVolumeUp } from 'react-icons/fa';
 
 export default function WatchPage() {
   const { id } = useParams();
   const [videoData, setVideoData] = useState(null);
   const [error, setError] = useState(null);
   const [showQR, setShowQR] = useState(false);
-  const [showInfo, setShowInfo] = useState(false);
   const [muted, setMuted] = useState(false);
-  const [volume, setVolume] = useState(1);
   const videoRef = useRef(null);
   const progressRef = useRef(null);
 
@@ -21,7 +20,6 @@ export default function WatchPage() {
         if (!res.ok) throw new Error('Video not found or expired');
         const data = await res.json();
         setVideoData(data);
-        if (typeof data.volume === 'number') setVolume(data.volume);
       } catch (err) {
         setError(err.message);
       }
@@ -29,6 +27,28 @@ export default function WatchPage() {
 
     fetchVideo();
   }, [id]);
+
+  useEffect(() => {
+    if (!videoData || !videoData.url || !videoRef.current) return;
+
+    const video = videoRef.current;
+    const volume = typeof videoData.volume === 'number' ? videoData.volume : 1;
+
+    if (Hls.isSupported()) {
+      const hls = new Hls();
+      hls.loadSource(videoData.url);
+      hls.attachMedia(video);
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        video.volume = volume;
+        if (!muted) video.play().catch(() => {});
+      });
+
+      return () => hls.destroy();
+    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+      video.src = videoData.url;
+      video.volume = volume;
+    }
+  }, [videoData, muted]);
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -41,12 +61,6 @@ export default function WatchPage() {
     }, 100);
     return () => clearInterval(interval);
   }, []);
-
-  useEffect(() => {
-    if (videoRef.current) {
-      videoRef.current.volume = volume;
-    }
-  }, [volume]);
 
   const toggleMute = () => {
     const video = videoRef.current;
@@ -82,47 +96,45 @@ export default function WatchPage() {
     );
   }
 
-  const loop = videoData.loop === true;
-
   return (
     <div style={{ position: 'relative', width: '100vw', height: '100vh', overflow: 'hidden', backgroundColor: 'black' }}>
       <video
         ref={videoRef}
-        src={videoData.url}
-        autoPlay
-        loop={loop}
+        loop={videoData.loop === true}
         muted={muted}
         controls={false}
         playsInline
         preload="auto"
-        onClick={() => {
-          const video = videoRef.current;
-          if (video) {
-            video.paused ? video.play() : video.pause();
-          }
-        }}
         style={{
           width: '100vw',
           height: '100vh',
           objectFit: 'contain',
           cursor: 'pointer',
         }}
+        onClick={() => {
+          const video = videoRef.current;
+          if (video) {
+            video.paused ? video.play() : video.pause();
+          }
+        }}
       />
 
-      {/* Clickable NutriLink Logo */}
-      <Link to="/" style={{ position: 'absolute', top: '0.1rem', left: '0.11rem', zIndex: 10 }}>
-        <img
-          src="/nutrilink-logo.png"
-          alt="NutriLink"
-          style={{
-            height: '150px',
-            opacity: 0.95,
-            pointerEvents: 'auto',
-          }}
-        />
-      </Link>
+      <img
+        src="/nutrilink-logo.png"
+        alt="NutriLink"
+        style={{
+          position: 'absolute',
+          top: '0.1rem',
+          left: '0.11rem',
+          height: '150px',
+          zIndex: 10,
+          opacity: 0.95,
+          pointerEvents: 'auto',
+          cursor: 'pointer',
+        }}
+        onClick={() => window.location.href = '/'}
+      />
 
-      {/* Sidebar Buttons */}
       <div
         style={{
           position: 'absolute',
@@ -137,58 +149,18 @@ export default function WatchPage() {
         }}
       >
         <FaQrcode size={24} onClick={() => setShowQR(true)} style={{ cursor: 'pointer' }} title="Share" />
-        <FaDownload size={24} onClick={() => window.open(videoData.url, '_blank')} style={{ cursor: 'pointer' }} title="Download" />
+        <FaDownload
+          size={24}
+          onClick={() => window.open(videoData.url, '_blank')}
+          style={{ cursor: 'pointer' }}
+          title="Download"
+        />
         {muted ? (
           <FaVolumeMute size={24} onClick={toggleMute} style={{ cursor: 'pointer' }} title="Unmute" />
         ) : (
           <FaVolumeUp size={24} onClick={toggleMute} style={{ cursor: 'pointer' }} title="Mute" />
         )}
-        <FaInfoCircle size={24} onClick={() => setShowInfo(!showInfo)} style={{ cursor: 'pointer' }} title="Info" />
       </div>
-
-      {/* Volume Slider (bottom left) */}
-      <div style={{
-        position: 'absolute',
-        bottom: '4.2rem',
-        left: '1rem',
-        zIndex: 10,
-        color: '#fff',
-        fontSize: '12px'
-      }}>
-        <label>Volume</label>
-        <input
-          type="range"
-          min="0"
-          max="1"
-          step="0.01"
-          value={volume}
-          onChange={(e) => setVolume(parseFloat(e.target.value))}
-          style={{ marginLeft: '0.5rem' }}
-        />
-        <span style={{ marginLeft: '0.5rem' }}>{(volume * 100).toFixed(0)}%</span>
-      </div>
-
-      {/* Info Panel */}
-      {showInfo && (
-        <div
-          style={{
-            position: 'absolute',
-            top: '3rem',
-            right: '6rem',
-            backgroundColor: 'rgba(0,0,0,0.8)',
-            color: '#fff',
-            padding: '1rem',
-            borderRadius: '10px',
-            fontSize: '14px',
-            maxWidth: '250px',
-            zIndex: 20,
-          }}
-        >
-          <strong>{videoData.filename || 'Untitled'}</strong>
-          <p style={{ marginTop: '0.5rem' }}>{videoData.description || 'No description available.'}</p>
-          <p><b>Loop:</b> {loop ? 'Yes' : 'No'}</p>
-        </div>
-      )}
 
       {/* Progress Bar */}
       <div
