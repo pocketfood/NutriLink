@@ -18,10 +18,13 @@ export default function WatchMultiPage() {
   const [muted, setMuted] = useState(false);
   const [showQR, setShowQR] = useState(false);
   const [showInfo, setShowInfo] = useState(true);
+  const [showChrome, setShowChrome] = useState(true);
   const [error, setError] = useState(null);
 
   const videoRefs = useRef([]);
   const progressRefs = useRef([]);
+  const hideTimerRef = useRef(null);
+  const playingIndexRef = useRef(null);
 
   useEffect(() => {
     async function fetchAllVideos() {
@@ -118,6 +121,38 @@ export default function WatchMultiPage() {
     return () => clearInterval(interval);
   }, []);
 
+  useEffect(() => {
+    return () => {
+      if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
+    };
+  }, []);
+
+  const scheduleHideChrome = () => {
+    if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
+    hideTimerRef.current = setTimeout(() => {
+      if (playingIndexRef.current !== null) setShowChrome(false);
+    }, 1600);
+  };
+
+  const revealChrome = () => {
+    setShowChrome(true);
+    if (playingIndexRef.current !== null) scheduleHideChrome();
+  };
+
+  const handlePlay = (index) => {
+    playingIndexRef.current = index;
+    setShowChrome(true);
+    scheduleHideChrome();
+  };
+
+  const handlePause = (index) => {
+    if (playingIndexRef.current === index) {
+      playingIndexRef.current = null;
+    }
+    setShowChrome(true);
+    if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
+  };
+
   const handleSeek = (e, index) => {
     const video = videoRefs.current[index];
     const bar = e.currentTarget;
@@ -147,6 +182,77 @@ export default function WatchMultiPage() {
     });
   };
 
+  const controlsBarStyle = {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    width: '100%',
+    padding: '0.75rem 1rem calc(0.9rem + env(safe-area-inset-bottom))',
+    background: 'linear-gradient(to top, rgba(0,0,0,0.75), rgba(0,0,0,0))',
+    borderRadius: '16px 16px 0 0',
+    boxSizing: 'border-box',
+    opacity: showChrome ? 1 : 0,
+    pointerEvents: showChrome ? 'auto' : 'none',
+    transition: 'opacity 0.35s ease',
+    zIndex: 12,
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '0.5rem',
+  };
+
+  const controlsRowStyle = {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '0.75rem',
+    flexWrap: 'wrap',
+    rowGap: '0.5rem',
+  };
+
+  const controlsGroupStyle = {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.5rem',
+  };
+
+  const iconButtonStyle = {
+    width: '34px',
+    height: '34px',
+    borderRadius: '999px',
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    border: '1px solid rgba(255,255,255,0.12)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    color: '#fff',
+    cursor: 'pointer',
+  };
+
+  const volumeSliderStyle = {
+    width: 'clamp(72px, 30vw, 120px)',
+    accentColor: '#ffffff',
+  };
+
+  const progressWrapperStyle = {
+    cursor: 'pointer',
+    padding: '0.2rem 0',
+  };
+
+  const progressTrackStyle = {
+    height: '6px',
+    width: '100%',
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    borderRadius: '999px',
+    overflow: 'hidden',
+  };
+
+  const progressFillStyle = {
+    height: '100%',
+    width: '0%',
+    backgroundColor: '#ffffff',
+  };
+
   if (error) {
     return <div style={{ color: 'white', textAlign: 'center', marginTop: '2rem' }}>{error}</div>;
   }
@@ -159,11 +265,14 @@ export default function WatchMultiPage() {
     <div
       style={{
         height: '100vh',
-        width: '100vw',
+        width: '100%',
+        overflowX: 'hidden',
         overflowY: 'scroll',
         scrollSnapType: 'y mandatory',
         backgroundColor: 'black',
       }}
+      onMouseMove={revealChrome}
+      onTouchStart={revealChrome}
     >
       {videoData.map((vid, index) => (
         <div
@@ -171,7 +280,7 @@ export default function WatchMultiPage() {
           style={{
             position: 'relative',
             height: '100vh',
-            width: '100vw',
+            width: '100%',
             scrollSnapAlign: 'start',
             overflow: 'hidden',
             backgroundColor: 'black',
@@ -183,13 +292,15 @@ export default function WatchMultiPage() {
             controls={false}
             playsInline
             preload="auto"
+            onPlay={() => handlePlay(index)}
+            onPause={() => handlePause(index)}
             onClick={() => {
               const v = videoRefs.current[index];
               if (v.paused) v.play();
               else v.pause();
             }}
             style={{
-              width: '100vw',
+              width: '100%',
               height: '100vh',
               objectFit: 'contain',
               backgroundColor: 'black',
@@ -206,79 +317,26 @@ export default function WatchMultiPage() {
               left: '0.11rem',
               height: '150px',
               zIndex: 10,
-              opacity: 0.95,
-              pointerEvents: 'auto',
+              opacity: showChrome ? 0.95 : 0,
+              pointerEvents: showChrome ? 'auto' : 'none',
+              transition: 'opacity 0.35s ease',
               cursor: 'pointer',
             }}
             onClick={() => navigate('/')}
           />
 
-          <div
-            style={{
-              position: 'absolute',
-              top: '3%',
-              right: '2rem',
-              zIndex: 10,
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '1.4rem',
-              alignItems: 'center',
-              color: 'white',
-            }}
-          >
-            <FaQrcode size={22} onClick={() => setShowQR(true)} style={{ cursor: 'pointer' }} title="Share" />
-            <FaDownload
-              size={22}
-              onClick={() => window.open(vid.url, '_blank')}
-              style={{ cursor: 'pointer' }}
-              title="Download"
-            />
-            <FaInfoCircle size={22} onClick={() => setShowInfo((prev) => !prev)} style={{ cursor: 'pointer' }} title="Toggle Info" />
-            {muted ? (
-              <FaVolumeMute size={22} onClick={toggleMute} style={{ cursor: 'pointer' }} title="Unmute" />
-            ) : (
-              <FaVolumeUp size={22} onClick={toggleMute} style={{ cursor: 'pointer' }} title="Mute" />
-            )}
-            <input
-              type="range"
-              min="0"
-              max="1"
-              step="0.01"
-              value={volume}
-              onChange={handleVolumeChange}
-              style={{ width: '80px', transform: 'rotate(270deg)' }}
-              title="Volume"
-            />
-          </div>
-
-          <div
-            onClick={(e) => handleSeek(e, index)}
-            style={{
-              position: 'absolute',
-              bottom: 10,
-              left: 0,
-              width: '100%',
-              height: '55px',
-              backgroundColor: '#333',
-              zIndex: 10,
-              cursor: 'pointer',
-            }}
-          >
-            <div
-              ref={(el) => (progressRefs.current[index] = el)}
-              style={{ height: '100%', width: '0%', backgroundColor: '#162557' }}
-            />
-          </div>
-
           {showInfo && (
             <div
               style={{
                 position: 'absolute',
-                bottom: '5rem',
+                bottom: 'calc(6rem + env(safe-area-inset-bottom))',
                 left: '1rem',
                 color: 'white',
                 zIndex: 10,
                 width: 'calc(100% - 5rem)',
+                opacity: showChrome ? 1 : 0,
+                pointerEvents: showChrome ? 'auto' : 'none',
+                transition: 'opacity 0.35s ease',
               }}
             >
               {vid.filename && <h3 style={{ margin: 0, fontSize: '1.25rem' }}>{vid.filename}</h3>}
@@ -287,13 +345,49 @@ export default function WatchMultiPage() {
               )}
             </div>
           )}
+
+          <div style={controlsBarStyle}>
+            <div style={controlsRowStyle}>
+              <div style={controlsGroupStyle}>
+                <div onClick={toggleMute} style={iconButtonStyle} title={muted ? 'Unmute' : 'Mute'}>
+                  {muted ? <FaVolumeMute size={18} /> : <FaVolumeUp size={18} />}
+                </div>
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.01"
+                  value={volume}
+                  onChange={handleVolumeChange}
+                  style={volumeSliderStyle}
+                  aria-label="Volume"
+                />
+              </div>
+              <div style={controlsGroupStyle}>
+                <div onClick={() => setShowInfo((prev) => !prev)} style={iconButtonStyle} title="Toggle Info">
+                  <FaInfoCircle size={18} />
+                </div>
+                <div onClick={() => setShowQR(true)} style={iconButtonStyle} title="Share">
+                  <FaQrcode size={18} />
+                </div>
+                <div onClick={() => window.open(vid.url, '_blank')} style={iconButtonStyle} title="Download">
+                  <FaDownload size={18} />
+                </div>
+              </div>
+            </div>
+            <div onClick={(e) => handleSeek(e, index)} style={progressWrapperStyle}>
+              <div style={progressTrackStyle}>
+                <div ref={(el) => (progressRefs.current[index] = el)} style={progressFillStyle} />
+              </div>
+            </div>
+          </div>
         </div>
       ))}
 
       <div
         style={{
           height: '100vh',
-          width: '100vw',
+          width: '100%',
           backgroundColor: 'black',
           scrollSnapAlign: 'start',
           display: 'flex',
@@ -329,8 +423,8 @@ export default function WatchMultiPage() {
             position: 'fixed',
             top: 0,
             left: 0,
-            width: '100vw',
-            height: '100vh',
+            width: '100%',
+            height: '100%',
             backgroundColor: 'rgba(0,0,0,0.7)',
             display: 'flex',
             justifyContent: 'center',
