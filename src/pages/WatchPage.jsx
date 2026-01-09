@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import QRCode from 'react-qr-code';
-import { FaDownload, FaQrcode, FaVolumeMute, FaVolumeUp, FaInfoCircle } from 'react-icons/fa';
+import { FaDownload, FaQrcode, FaVolumeMute, FaVolumeUp, FaInfoCircle, FaPlay, FaPause } from 'react-icons/fa';
 import WaveSurfer from 'wavesurfer.js';
 import Hls from 'hls.js';
 
@@ -15,6 +15,7 @@ export default function WatchPage() {
   const [volume, setVolume] = useState(1);
   const [showChrome, setShowChrome] = useState(true);
   const [waveError, setWaveError] = useState(null);
+  const [isPlaying, setIsPlaying] = useState(false);
   const videoRef = useRef(null);
   const progressRef = useRef(null);
   const waveformRef = useRef(null);
@@ -23,6 +24,8 @@ export default function WatchPage() {
   const waveHoverRef = useRef(null);
   const waveTimeRef = useRef(null);
   const waveDurationRef = useRef(null);
+  const seekTimeRef = useRef(null);
+  const seekDurationRef = useRef(null);
   const hideTimerRef = useRef(null);
   const playingRef = useRef(false);
 
@@ -52,24 +55,24 @@ export default function WatchPage() {
     canvas.height = height;
     const ctx = canvas.getContext('2d');
     if (!ctx) {
-      return { waveColor: '#656666', progressColor: '#EE772F' };
+      return { waveColor: '#7fb0ff', progressColor: '#4da2ff' };
     }
 
     const gradient = ctx.createLinearGradient(0, 0, 0, height * 1.35);
-    gradient.addColorStop(0, '#656666');
-    gradient.addColorStop((height * 0.7) / height, '#656666');
+    gradient.addColorStop(0, '#7fb0ff');
+    gradient.addColorStop((height * 0.7) / height, '#7fb0ff');
     gradient.addColorStop((height * 0.7 + 1) / height, '#ffffff');
     gradient.addColorStop((height * 0.7 + 2) / height, '#ffffff');
-    gradient.addColorStop((height * 0.7 + 3) / height, '#B1B1B1');
-    gradient.addColorStop(1, '#B1B1B1');
+    gradient.addColorStop((height * 0.7 + 3) / height, '#4a6fd6');
+    gradient.addColorStop(1, '#4a6fd6');
 
     const progressGradient = ctx.createLinearGradient(0, 0, 0, height * 1.35);
-    progressGradient.addColorStop(0, '#EE772F');
-    progressGradient.addColorStop((height * 0.7) / height, '#EB4926');
+    progressGradient.addColorStop(0, '#4da2ff');
+    progressGradient.addColorStop((height * 0.7) / height, '#2f7fe6');
     progressGradient.addColorStop((height * 0.7 + 1) / height, '#ffffff');
     progressGradient.addColorStop((height * 0.7 + 2) / height, '#ffffff');
-    progressGradient.addColorStop((height * 0.7 + 3) / height, '#F6B094');
-    progressGradient.addColorStop(1, '#F6B094');
+    progressGradient.addColorStop((height * 0.7 + 3) / height, '#9bbcff');
+    progressGradient.addColorStop(1, '#9bbcff');
 
     return { waveColor: gradient, progressColor: progressGradient };
   };
@@ -145,10 +148,15 @@ export default function WatchPage() {
     const interval = setInterval(() => {
       const video = videoRef.current;
       const bar = progressRef.current;
-      if (video && bar && video.duration) {
-        const percent = (video.currentTime / video.duration) * 100;
+      if (!video) return;
+      const duration = Number.isFinite(video.duration) ? video.duration : 0;
+      const currentTime = Number.isFinite(video.currentTime) ? video.currentTime : 0;
+      if (bar) {
+        const percent = duration ? (currentTime / duration) * 100 : 0;
         bar.style.width = `${percent}%`;
       }
+      if (seekTimeRef.current) seekTimeRef.current.textContent = formatTime(currentTime);
+      if (seekDurationRef.current) seekDurationRef.current.textContent = formatTime(duration);
     }, 100);
     return () => clearInterval(interval);
   }, []);
@@ -255,12 +263,14 @@ export default function WatchPage() {
 
   const handlePlay = () => {
     playingRef.current = true;
+    setIsPlaying(true);
     setShowChrome(true);
     if (!isAudioContent) scheduleHideChrome();
   };
 
   const handlePause = () => {
     playingRef.current = false;
+    setIsPlaying(false);
     setShowChrome(true);
     if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
   };
@@ -278,6 +288,16 @@ export default function WatchPage() {
     const percent = x / rect.width;
     if (video && video.duration) {
       video.currentTime = percent * video.duration;
+    }
+  };
+
+  const togglePlayback = () => {
+    const video = videoRef.current;
+    if (!video) return;
+    if (video.paused) {
+      video.play().catch(() => {});
+    } else {
+      video.pause();
     }
   };
 
@@ -354,6 +374,8 @@ export default function WatchPage() {
   const progressWrapperStyle = {
     cursor: 'pointer',
     padding: '0.2rem 0',
+    flex: 1,
+    minWidth: 0,
   };
 
   const progressTrackStyle = {
@@ -369,6 +391,41 @@ export default function WatchPage() {
     width: '0%',
     backgroundColor: '#ffffff',
     transition: 'width 0.1s linear',
+  };
+
+  const seekRowStyle = {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.6rem',
+    width: '100%',
+  };
+
+  const seekButtonStyle = {
+    width: '30px',
+    height: '30px',
+    borderRadius: '999px',
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    border: '1px solid rgba(255,255,255,0.12)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    color: '#fff',
+    cursor: 'pointer',
+  };
+
+  const seekTimeStyle = {
+    minWidth: '3.4rem',
+    fontSize: '0.8rem',
+    color: '#cfe2ff',
+    fontVariantNumeric: 'tabular-nums',
+  };
+
+  const seekDurationStyle = {
+    minWidth: '3.4rem',
+    fontSize: '0.8rem',
+    color: '#cfe2ff',
+    fontVariantNumeric: 'tabular-nums',
+    textAlign: 'right',
   };
 
   const infoCardStyle = {
@@ -665,10 +722,22 @@ export default function WatchPage() {
             </div>
           </div>
         </div>
-        <div onClick={handleSeek} style={progressWrapperStyle}>
-          <div style={progressTrackStyle}>
-            <div ref={progressRef} style={progressFillStyle} />
+        <div style={seekRowStyle}>
+          <button
+            type="button"
+            onClick={togglePlayback}
+            style={seekButtonStyle}
+            aria-label={isPlaying ? 'Pause' : 'Play'}
+          >
+            {isPlaying ? <FaPause size={14} /> : <FaPlay size={14} />}
+          </button>
+          <div ref={seekTimeRef} style={seekTimeStyle}>0:00</div>
+          <div onClick={handleSeek} style={progressWrapperStyle}>
+            <div style={progressTrackStyle}>
+              <div ref={progressRef} style={progressFillStyle} />
+            </div>
           </div>
+          <div ref={seekDurationRef} style={seekDurationStyle}>0:00</div>
         </div>
       </div>
 
