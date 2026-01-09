@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import QRCode from 'react-qr-code';
-import { FaDownload, FaQrcode, FaVolumeMute, FaVolumeUp, FaInfoCircle, FaPlay, FaPause } from 'react-icons/fa';
+import { FaDownload, FaQrcode, FaVolumeMute, FaVolumeUp, FaInfoCircle, FaPlay, FaPause, FaRedo } from 'react-icons/fa';
 import WaveSurfer from 'wavesurfer.js';
 import Hls from 'hls.js';
 
@@ -16,6 +16,7 @@ export default function WatchPage() {
   const [showChrome, setShowChrome] = useState(true);
   const [waveError, setWaveError] = useState(null);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [loopEnabled, setLoopEnabled] = useState(false);
   const videoRef = useRef(null);
   const progressRef = useRef(null);
   const waveformRef = useRef(null);
@@ -88,6 +89,7 @@ export default function WatchPage() {
         if (!res.ok) throw new Error('Video not found or expired');
         const data = await res.json();
         setVideoData(data);
+        setLoopEnabled(Boolean(data.loop));
         if (typeof data.volume === 'number') setVolume(data.volume);
       } catch (err) {
         setError(err.message);
@@ -132,7 +134,6 @@ export default function WatchPage() {
       if (mediaSrc) video.src = mediaSrc;
     }
 
-    video.loop = videoData.loop === true;
     video.volume = volume;
     video.muted = muted;
 
@@ -164,6 +165,10 @@ export default function WatchPage() {
   useEffect(() => {
     if (videoRef.current) videoRef.current.volume = volume;
   }, [volume]);
+
+  useEffect(() => {
+    if (videoRef.current) videoRef.current.loop = loopEnabled;
+  }, [loopEnabled]);
 
   useEffect(() => {
     if (!isAudioContent || !audioSrc) {
@@ -213,7 +218,7 @@ export default function WatchPage() {
       setWaveError('Waveform unavailable for this audio source.');
     });
     const unsubscribeInteraction = wavesurfer.on('interaction', () => {
-      wavesurfer.play().catch(() => {});
+      wavesurfer.playPause();
     });
     const unsubscribeDecode = wavesurfer.on('decode', (duration) => {
       if (waveDurationRef.current) waveDurationRef.current.textContent = formatTime(duration);
@@ -278,6 +283,10 @@ export default function WatchPage() {
   const toggleMute = () => {
     if (videoRef.current) videoRef.current.muted = !muted;
     setMuted(!muted);
+  };
+
+  const toggleLoop = () => {
+    setLoopEnabled((prev) => !prev);
   };
 
   const handleSeek = (e) => {
@@ -364,6 +373,11 @@ export default function WatchPage() {
     justifyContent: 'center',
     color: '#fff',
     cursor: 'pointer',
+  };
+
+  const toggleActiveStyle = {
+    backgroundColor: 'rgba(77,162,255,0.35)',
+    border: '1px solid rgba(127,176,255,0.6)',
   };
 
   const volumeSliderStyle = {
@@ -705,6 +719,13 @@ export default function WatchPage() {
           </div>
           <div style={controlsGroupStyle}>
             <div
+              onClick={toggleLoop}
+              style={{ ...iconButtonStyle, ...(loopEnabled ? toggleActiveStyle : null) }}
+              title={loopEnabled ? 'Disable Loop' : 'Enable Loop'}
+            >
+              <FaRedo size={16} color="#fff" />
+            </div>
+            <div
               onClick={() => {
                 setShowInfo((prev) => !prev);
                 revealChrome();
@@ -729,7 +750,7 @@ export default function WatchPage() {
             style={seekButtonStyle}
             aria-label={isPlaying ? 'Pause' : 'Play'}
           >
-            {isPlaying ? <FaPause size={14} /> : <FaPlay size={14} />}
+            {isPlaying ? <FaPause size={16} color="#fff" /> : <FaPlay size={16} color="#fff" />}
           </button>
           <div ref={seekTimeRef} style={seekTimeStyle}>0:00</div>
           <div onClick={handleSeek} style={progressWrapperStyle}>
