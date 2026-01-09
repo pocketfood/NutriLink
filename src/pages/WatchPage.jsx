@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import QRCode from 'react-qr-code';
 import { FaDownload, FaQrcode, FaVolumeMute, FaVolumeUp, FaInfoCircle } from 'react-icons/fa';
+import WaveSurfer from 'wavesurfer.js';
 import Hls from 'hls.js';
 
 export default function WatchPage() {
@@ -13,10 +14,27 @@ export default function WatchPage() {
   const [muted, setMuted] = useState(false);
   const [volume, setVolume] = useState(1);
   const [showChrome, setShowChrome] = useState(true);
+  const [waveError, setWaveError] = useState(null);
   const videoRef = useRef(null);
   const progressRef = useRef(null);
+  const waveformRef = useRef(null);
+  const wavesurferRef = useRef(null);
   const hideTimerRef = useRef(null);
   const playingRef = useRef(false);
+
+  const isAudioUrl = (value) => {
+    if (!value) return false;
+    return /\.(mp3|m4a|aac|wav|ogg|flac)(\?|#|$)/i.test(value);
+  };
+
+  const isAudioContent = videoData && (videoData.type === 'audio' || isAudioUrl(videoData.url));
+
+  const getAudioProxyUrl = (value) => {
+    if (!value) return value;
+    if (value.startsWith('blob:') || value.startsWith('data:')) return value;
+    if (value.startsWith('/api/proxy?url=')) return value;
+    return `/api/proxy?url=${encodeURIComponent(value)}`;
+  };
 
   useEffect(() => {
     async function fetchVideo() {
@@ -39,7 +57,9 @@ export default function WatchPage() {
 
     const video = videoRef.current;
 
-    if (videoData.url.endsWith('.m3u8')) {
+    if (isAudioContent) {
+      video.src = getAudioProxyUrl(videoData.url);
+    } else if (videoData.url.endsWith('.m3u8')) {
       if (Hls.isSupported()) {
         const hls = new Hls();
         hls.loadSource(videoData.url);
@@ -79,12 +99,74 @@ export default function WatchPage() {
   }, [volume]);
 
   useEffect(() => {
+    if (!isAudioContent || !videoData?.url) {
+      if (wavesurferRef.current) {
+        wavesurferRef.current.destroy();
+        wavesurferRef.current = null;
+      }
+      setWaveError(null);
+      return;
+    }
+
+    const container = waveformRef.current;
+    const media = videoRef.current;
+    if (!container || !media) return;
+
+    if (wavesurferRef.current) {
+      wavesurferRef.current.destroy();
+      wavesurferRef.current = null;
+    }
+
+    setWaveError(null);
+    const wavesurfer = WaveSurfer.create({
+      container,
+      height: 96,
+      waveColor: 'rgba(127,176,255,0.65)',
+      progressColor: '#ffffff',
+      cursorColor: 'rgba(255,255,255,0.75)',
+      cursorWidth: 1,
+      barWidth: 3,
+      barGap: 2,
+      barRadius: 2,
+      barMinHeight: 2,
+      barHeight: 0.9,
+      normalize: true,
+      interact: false,
+      backend: 'MediaElement',
+      media,
+    });
+
+    const unsubscribeReady = wavesurfer.on('ready', () => setWaveError(null));
+    const unsubscribeError = wavesurfer.on('error', () => {
+      setWaveError('Waveform unavailable for this audio source.');
+    });
+
+    const waveformUrl = getAudioProxyUrl(videoData.url);
+    wavesurfer.load(waveformUrl);
+    wavesurferRef.current = wavesurfer;
+
+    return () => {
+      unsubscribeReady();
+      unsubscribeError();
+      wavesurfer.destroy();
+      wavesurferRef.current = null;
+    };
+  }, [isAudioContent, videoData?.url]);
+
+  useEffect(() => {
+    if (!isAudioContent) return;
+    setShowChrome(true);
+    if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
+  }, [isAudioContent]);
+
+  useEffect(() => {
     return () => {
       if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
     };
   }, []);
 
   const scheduleHideChrome = () => {
+    if (isAudioContent) return;
     if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
     hideTimerRef.current = setTimeout(() => {
       if (playingRef.current) setShowChrome(false);
@@ -93,13 +175,13 @@ export default function WatchPage() {
 
   const revealChrome = () => {
     setShowChrome(true);
-    if (playingRef.current) scheduleHideChrome();
+    if (playingRef.current && !isAudioContent) scheduleHideChrome();
   };
 
   const handlePlay = () => {
     playingRef.current = true;
     setShowChrome(true);
-    scheduleHideChrome();
+    if (!isAudioContent) scheduleHideChrome();
   };
 
   const handlePause = () => {
@@ -216,6 +298,41 @@ export default function WatchPage() {
     wordBreak: 'break-all',
   };
 
+  const audioWaveWrapStyle = {
+    position: 'absolute',
+    left: '1rem',
+    right: '1rem',
+    top: '40%',
+    transform: 'translateY(-50%)',
+    zIndex: 4,
+    pointerEvents: 'none',
+  };
+
+  const audioWaveStyle = {
+    width: '100%',
+    height: '96px',
+    borderRadius: '14px',
+    border: '1px solid rgba(127,176,255,0.45)',
+    background: 'linear-gradient(135deg, rgba(6,16,32,0.75), rgba(9,27,56,0.6))',
+    boxShadow: '0 10px 25px rgba(0,0,0,0.35)',
+    padding: '0.4rem 0.6rem',
+    boxSizing: 'border-box',
+    position: 'relative',
+  };
+
+  const audioWaveMessageStyle = {
+    position: 'absolute',
+    inset: 0,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    textAlign: 'center',
+    fontSize: '0.85rem',
+    color: '#cfe2ff',
+    padding: '0.5rem',
+    pointerEvents: 'none',
+  };
+
   if (error) {
     return (
       <div
@@ -299,8 +416,18 @@ export default function WatchPage() {
           height: '100vh',
           objectFit: 'contain',
           cursor: 'pointer',
+          opacity: isAudioContent ? 0 : 1,
+          transition: 'opacity 0.35s ease',
         }}
       />
+
+      {isAudioContent && (
+        <div style={audioWaveWrapStyle}>
+          <div ref={waveformRef} style={audioWaveStyle}>
+            {waveError && <div style={audioWaveMessageStyle}>{waveError}</div>}
+          </div>
+        </div>
+      )}
 
       <Link
         to="/"
