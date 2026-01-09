@@ -218,7 +218,7 @@ export default function WatchPage() {
       setWaveError('Waveform unavailable for this audio source.');
     });
     const unsubscribeInteraction = wavesurfer.on('interaction', () => {
-      wavesurfer.playPause();
+      wavesurfer.play().catch(() => {});
     });
     const unsubscribeDecode = wavesurfer.on('decode', (duration) => {
       if (waveDurationRef.current) waveDurationRef.current.textContent = formatTime(duration);
