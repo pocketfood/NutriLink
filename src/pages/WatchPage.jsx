@@ -27,7 +27,17 @@ export default function WatchPage() {
     return /\.(mp3|m4a|aac|wav|ogg|flac)(\?|#|$)/i.test(value);
   };
 
+  const getAudioProxyUrl = (url) => {
+    if (!url) return url;
+    if (url.startsWith('/api/proxy?url=')) return url;
+    if (url.startsWith('blob:') || url.startsWith('data:')) return url;
+    if (!/^https?:/i.test(url)) return url;
+    if (typeof window !== 'undefined' && url.startsWith(window.location.origin)) return url;
+    return `/api/proxy?url=${encodeURIComponent(url)}`;
+  };
+
   const isAudioContent = videoData && (videoData.type === 'audio' || isAudioUrl(videoData.url));
+  const audioSrc = isAudioContent && videoData?.url ? getAudioProxyUrl(videoData.url) : null;
 
   useEffect(() => {
     async function fetchVideo() {
@@ -51,7 +61,7 @@ export default function WatchPage() {
     const video = videoRef.current;
 
     if (isAudioContent) {
-      video.src = videoData.url;
+      if (audioSrc) video.src = audioSrc;
     } else if (videoData.url.endsWith('.m3u8')) {
       if (Hls.isSupported()) {
         const hls = new Hls();
@@ -73,7 +83,7 @@ export default function WatchPage() {
     video.volume = volume;
     video.muted = muted;
 
-  }, [videoData]);
+  }, [videoData, isAudioContent, audioSrc]);
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -92,7 +102,7 @@ export default function WatchPage() {
   }, [volume]);
 
   useEffect(() => {
-    if (!isAudioContent || !videoData?.url) {
+    if (!isAudioContent || !audioSrc) {
       if (wavesurferRef.current) {
         wavesurferRef.current.destroy();
         wavesurferRef.current = null;
@@ -134,7 +144,7 @@ export default function WatchPage() {
       setWaveError('Waveform unavailable for this audio source.');
     });
 
-    wavesurfer.load(videoData.url);
+    wavesurfer.load(audioSrc);
     wavesurferRef.current = wavesurfer;
 
     return () => {
@@ -143,7 +153,7 @@ export default function WatchPage() {
       wavesurfer.destroy();
       wavesurferRef.current = null;
     };
-  }, [isAudioContent, videoData?.url]);
+  }, [isAudioContent, audioSrc]);
 
   useEffect(() => {
     if (!isAudioContent) return;
@@ -395,6 +405,7 @@ export default function WatchPage() {
         controls={false}
         playsInline
         preload="auto"
+        crossOrigin="anonymous"
         onPlay={handlePlay}
         onPause={handlePause}
         onClick={() => {
