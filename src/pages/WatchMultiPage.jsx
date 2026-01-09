@@ -315,7 +315,7 @@ export default function WatchMultiPage() {
         }));
       });
       const unsubscribeInteraction = wavesurfer.on('interaction', () => {
-        wavesurfer.playPause();
+        wavesurfer.play().catch(() => {});
       });
       const unsubscribeDecode = wavesurfer.on('decode', (duration) => {
         if (waveDurationRefs.current[index]) {
