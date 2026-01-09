@@ -9,6 +9,7 @@ import {
   FaInfoCircle,
 } from 'react-icons/fa';
 import Hls from 'hls.js';
+import WaveSurfer from 'wavesurfer.js';
 
 export default function WatchMultiPage() {
   const { id } = useParams();
@@ -20,11 +21,15 @@ export default function WatchMultiPage() {
   const [showInfo, setShowInfo] = useState(false);
   const [showChrome, setShowChrome] = useState(true);
   const [error, setError] = useState(null);
+  const [waveErrors, setWaveErrors] = useState({});
 
   const videoRefs = useRef([]);
   const progressRefs = useRef([]);
+  const waveformRefs = useRef([]);
+  const wavesurferRefs = useRef([]);
   const hideTimerRef = useRef(null);
   const playingIndexRef = useRef(null);
+  const playingIsAudioRef = useRef(false);
 
   useEffect(() => {
     async function fetchAllVideos() {
@@ -37,7 +42,9 @@ export default function WatchMultiPage() {
               if (res.status === 404) return [];
               if (!res.ok) throw new Error(`Failed to load ${blobId}`);
               const json = await res.json();
-              return Array.isArray(json.videos) ? json.videos : [];
+              const list = Array.isArray(json.videos) ? json.videos : [];
+              const type = json.type;
+              return list.filter(Boolean).map((vid) => ({ ...vid, type }));
             } catch (err) {
               console.warn('Skipping video blob:', blobId, err);
               return [];
@@ -68,7 +75,9 @@ export default function WatchMultiPage() {
       const vid = videoData[index];
       if (!video || !vid || !vid.url) return;
 
-      if (vid.url.endsWith('.m3u8')) {
+      if (isAudioItem(vid)) {
+        video.src = getAudioProxyUrl(vid.url);
+      } else if (vid.url.endsWith('.m3u8')) {
         if (Hls.isSupported()) {
           const hls = new Hls();
           hls.loadSource(vid.url);
@@ -144,7 +153,90 @@ export default function WatchMultiPage() {
     };
   }, []);
 
+  const isAudioUrl = (value) => {
+    if (!value) return false;
+    return /\.(mp3|m4a|aac|wav|ogg|flac)(\?|#|$)/i.test(value);
+  };
+
+  const isAudioItem = (vid) => {
+    if (!vid) return false;
+    return vid.type === 'audio' || isAudioUrl(vid.url);
+  };
+
+  const getAudioProxyUrl = (value) => {
+    if (!value) return value;
+    if (value.startsWith('blob:') || value.startsWith('data:')) return value;
+    if (value.startsWith('/api/proxy?url=')) return value;
+    return `/api/proxy?url=${encodeURIComponent(value)}`;
+  };
+
+  useEffect(() => {
+    wavesurferRefs.current.forEach((wavesurfer) => {
+      if (wavesurfer) wavesurfer.destroy();
+    });
+    wavesurferRefs.current = [];
+    setWaveErrors({});
+    const cleanups = [];
+
+    videoData.forEach((vid, index) => {
+      if (!isAudioItem(vid)) return;
+      const container = waveformRefs.current[index];
+      const media = videoRefs.current[index];
+      if (!container || !media) return;
+
+      const wavesurfer = WaveSurfer.create({
+        container,
+        height: 96,
+        waveColor: 'rgba(127,176,255,0.65)',
+        progressColor: '#ffffff',
+        cursorColor: 'rgba(255,255,255,0.75)',
+        cursorWidth: 1,
+        barWidth: 3,
+        barGap: 2,
+        barRadius: 2,
+        barMinHeight: 2,
+        barHeight: 0.9,
+        normalize: true,
+        interact: false,
+        backend: 'MediaElement',
+        media,
+      });
+
+      const unsubscribeReady = wavesurfer.on('ready', () => {
+        setWaveErrors((prev) => {
+          if (!prev[index]) return prev;
+          const next = { ...prev };
+          delete next[index];
+          return next;
+        });
+      });
+      const unsubscribeError = wavesurfer.on('error', () => {
+        setWaveErrors((prev) => ({
+          ...prev,
+          [index]: 'Waveform unavailable for this audio source.',
+        }));
+      });
+      cleanups.push(() => {
+        unsubscribeReady();
+        unsubscribeError();
+      });
+
+      const waveformUrl = getAudioProxyUrl(vid.url);
+      wavesurfer.load(waveformUrl);
+      wavesurferRefs.current[index] = wavesurfer;
+    });
+
+    return () => {
+      cleanups.forEach((cleanup) => cleanup());
+      wavesurferRefs.current.forEach((wavesurfer) => {
+        if (wavesurfer) wavesurfer.destroy();
+      });
+      wavesurferRefs.current = [];
+    };
+  }, [videoData]);
+
   const scheduleHideChrome = () => {
+    if (playingIsAudioRef.current) return;
     if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
     hideTimerRef.current = setTimeout(() => {
       if (playingIndexRef.current !== null) setShowChrome(false);
@@ -153,18 +245,25 @@ export default function WatchMultiPage() {
 
   const revealChrome = () => {
     setShowChrome(true);
-    if (playingIndexRef.current !== null) scheduleHideChrome();
+    if (playingIndexRef.current !== null && !playingIsAudioRef.current) scheduleHideChrome();
   };
 
   const handlePlay = (index) => {
+    const isAudio = isAudioItem(videoData[index]);
     playingIndexRef.current = index;
+    playingIsAudioRef.current = isAudio;
     setShowChrome(true);
+    if (isAudio) {
+      if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
+      return;
+    }
     scheduleHideChrome();
   };
 
   const handlePause = (index) => {
     if (playingIndexRef.current === index) {
       playingIndexRef.current = null;
+      playingIsAudioRef.current = false;
     }
     setShowChrome(true);
     if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
@@ -270,6 +369,41 @@ export default function WatchMultiPage() {
     backgroundColor: '#ffffff',
   };
 
+  const audioWaveWrapStyle = {
+    position: 'absolute',
+    left: '1rem',
+    right: '1rem',
+    top: '40%',
+    transform: 'translateY(-50%)',
+    zIndex: 4,
+    pointerEvents: 'none',
+  };
+
+  const audioWaveStyle = {
+    width: '100%',
+    height: '96px',
+    borderRadius: '14px',
+    border: '1px solid rgba(127,176,255,0.45)',
+    background: 'linear-gradient(135deg, rgba(6,16,32,0.75), rgba(9,27,56,0.6))',
+    boxShadow: '0 10px 25px rgba(0,0,0,0.35)',
+    padding: '0.4rem 0.6rem',
+    boxSizing: 'border-box',
+    position: 'relative',
+  };
+
+  const audioWaveMessageStyle = {
+    position: 'absolute',
+    inset: 0,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    textAlign: 'center',
+    fontSize: '0.85rem',
+    color: '#cfe2ff',
+    padding: '0.5rem',
+    pointerEvents: 'none',
+  };
+
   const infoCardStyle = {
     position: 'absolute',
     left: '1rem',
@@ -357,146 +491,159 @@ export default function WatchMultiPage() {
       onMouseMove={revealChrome}
       onTouchStart={revealChrome}
     >
-      {videoData.map((vid, index) => (
-        <div
-          key={index}
-          style={{
-            position: 'relative',
-            height: '100vh',
-            width: '100%',
-            scrollSnapAlign: 'start',
-            overflow: 'hidden',
-            backgroundColor: 'black',
-          }}
-        >
-          <video
-            ref={(el) => (videoRefs.current[index] = el)}
-            muted={muted}
-            controls={false}
-            playsInline
-            preload="auto"
-            onPlay={() => handlePlay(index)}
-            onPause={() => handlePause(index)}
-            onClick={() => {
-              const v = videoRefs.current[index];
-              if (v.paused) v.play();
-              else v.pause();
-            }}
+      {videoData.map((vid, index) => {
+        const isAudio = isAudioItem(vid);
+        return (
+          <div
+            key={index}
             style={{
-              width: '100%',
+              position: 'relative',
               height: '100vh',
-              objectFit: 'contain',
+              width: '100%',
+              scrollSnapAlign: 'start',
+              overflow: 'hidden',
               backgroundColor: 'black',
-              cursor: 'pointer',
             }}
-          />
-
-          <img
-            src="/nutrilink-logo.png"
-            alt="NutriLink"
-            style={{
-              position: 'absolute',
-              top: '0.1rem',
-              left: '0.11rem',
-              height: '150px',
-              zIndex: 10,
-              opacity: showChrome ? 0.95 : 0,
-              pointerEvents: showChrome ? 'auto' : 'none',
-              transition: 'opacity 0.35s ease',
-              cursor: 'pointer',
-            }}
-            onClick={() => navigate('/')}
-          />
-
-          {!showInfo && (
-            <div
+          >
+            <video
+              ref={(el) => (videoRefs.current[index] = el)}
+              muted={muted}
+              controls={false}
+              playsInline
+              preload="auto"
+              onPlay={() => handlePlay(index)}
+              onPause={() => handlePause(index)}
+              onClick={() => {
+                const v = videoRefs.current[index];
+                if (v.paused) v.play();
+                else v.pause();
+              }}
               style={{
-                position: 'absolute',
-                bottom: 'calc(6rem + env(safe-area-inset-bottom))',
-                left: '1rem',
-                color: 'white',
-                zIndex: 10,
-                width: 'calc(100% - 5rem)',
-                opacity: showChrome ? 1 : 0,
-                pointerEvents: showChrome ? 'auto' : 'none',
+                width: '100%',
+                height: '100vh',
+                objectFit: 'contain',
+                backgroundColor: 'black',
+                cursor: 'pointer',
+                opacity: isAudio ? 0 : 1,
                 transition: 'opacity 0.35s ease',
               }}
-            >
-              {vid.filename && <h3 style={{ margin: 0, fontSize: '1.25rem' }}>{vid.filename}</h3>}
-              {vid.description && (
-                <p style={{ margin: '0.5rem 0 0', fontSize: '0.9rem', color: '#ccc' }}>{vid.description}</p>
-              )}
-            </div>
-          )}
+            />
 
-          {showInfo && (
-            <div style={infoCardStyle}>
-              <div style={{ fontWeight: 700, fontSize: '1rem' }}>{vid.filename || 'Untitled'}</div>
-              {vid.description && (
-                <div style={{ marginTop: '0.35rem', color: '#cfe2ff' }}>{vid.description}</div>
-              )}
-              <div style={{ marginTop: '0.6rem', fontSize: '0.82rem', color: '#d6e5ff' }}>
-                <div style={{ marginBottom: '0.35rem' }}>
-                  <span style={{ fontWeight: 600 }}>Author:</span> {vid.author || 'Anonymous'}
-                </div>
-                <div style={{ marginBottom: '0.35rem' }}>
-                  <span style={{ fontWeight: 600 }}>Link:</span>{' '}
-                  {vid.url ? (
-                    <a href={vid.url} target="_blank" rel="noreferrer" style={infoLinkStyle}>
-                      {vid.url}
-                    </a>
-                  ) : (
-                    'Unavailable'
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
+            <img
+              src="/nutrilink-logo.png"
+              alt="NutriLink"
+              style={{
+                position: 'absolute',
+                top: '0.1rem',
+                left: '0.11rem',
+                height: '150px',
+                zIndex: 10,
+                opacity: showChrome ? 0.95 : 0,
+                pointerEvents: showChrome ? 'auto' : 'none',
+                transition: 'opacity 0.35s ease',
+                cursor: 'pointer',
+              }}
+              onClick={() => navigate('/')}
+            />
 
-          <div style={controlsBarStyle}>
-            <div style={controlsRowStyle}>
-              <div style={controlsGroupStyle}>
-                <div onClick={toggleMute} style={iconButtonStyle} title={muted ? 'Unmute' : 'Mute'}>
-                  {muted ? <FaVolumeMute size={18} /> : <FaVolumeUp size={18} />}
-                </div>
-                <input
-                  type="range"
-                  min="0"
-                  max="1"
-                  step="0.01"
-                  value={volume}
-                  onChange={handleVolumeChange}
-                  style={volumeSliderStyle}
-                  aria-label="Volume"
-                />
-              </div>
-              <div style={controlsGroupStyle}>
-                <div
-                  onClick={() => {
-                    setShowInfo((prev) => !prev);
-                    revealChrome();
-                  }}
-                  style={iconButtonStyle}
-                  title="Toggle Info"
-                >
-                  <FaInfoCircle size={18} />
-                </div>
-                <div onClick={() => setShowQR(true)} style={iconButtonStyle} title="Share">
-                  <FaQrcode size={18} />
-                </div>
-                <div onClick={() => window.open(vid.url, '_blank')} style={iconButtonStyle} title="Download">
-                  <FaDownload size={18} />
+            {isAudio && (
+              <div style={audioWaveWrapStyle}>
+                <div ref={(el) => (waveformRefs.current[index] = el)} style={audioWaveStyle}>
+                  {waveErrors[index] && <div style={audioWaveMessageStyle}>{waveErrors[index]}</div>}
                 </div>
               </div>
-            </div>
-            <div onClick={(e) => handleSeek(e, index)} style={progressWrapperStyle}>
-              <div style={progressTrackStyle}>
-                <div ref={(el) => (progressRefs.current[index] = el)} style={progressFillStyle} />
+            )}
+
+            {!showInfo && (
+              <div
+                style={{
+                  position: 'absolute',
+                  bottom: 'calc(6rem + env(safe-area-inset-bottom))',
+                  left: '1rem',
+                  color: 'white',
+                  zIndex: 10,
+                  width: 'calc(100% - 5rem)',
+                  opacity: showChrome ? 1 : 0,
+                  pointerEvents: showChrome ? 'auto' : 'none',
+                  transition: 'opacity 0.35s ease',
+                }}
+              >
+                {vid.filename && <h3 style={{ margin: 0, fontSize: '1.25rem' }}>{vid.filename}</h3>}
+                {vid.description && (
+                  <p style={{ margin: '0.5rem 0 0', fontSize: '0.9rem', color: '#ccc' }}>{vid.description}</p>
+                )}
+              </div>
+            )}
+
+            {showInfo && (
+              <div style={infoCardStyle}>
+                <div style={{ fontWeight: 700, fontSize: '1rem' }}>{vid.filename || 'Untitled'}</div>
+                {vid.description && (
+                  <div style={{ marginTop: '0.35rem', color: '#cfe2ff' }}>{vid.description}</div>
+                )}
+                <div style={{ marginTop: '0.6rem', fontSize: '0.82rem', color: '#d6e5ff' }}>
+                  <div style={{ marginBottom: '0.35rem' }}>
+                    <span style={{ fontWeight: 600 }}>Author:</span> {vid.author || 'Anonymous'}
+                  </div>
+                  <div style={{ marginBottom: '0.35rem' }}>
+                    <span style={{ fontWeight: 600 }}>Link:</span>{' '}
+                    {vid.url ? (
+                      <a href={vid.url} target="_blank" rel="noreferrer" style={infoLinkStyle}>
+                        {vid.url}
+                      </a>
+                    ) : (
+                      'Unavailable'
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <div style={controlsBarStyle}>
+              <div style={controlsRowStyle}>
+                <div style={controlsGroupStyle}>
+                  <div onClick={toggleMute} style={iconButtonStyle} title={muted ? 'Unmute' : 'Mute'}>
+                    {muted ? <FaVolumeMute size={18} /> : <FaVolumeUp size={18} />}
+                  </div>
+                  <input
+                    type="range"
+                    min="0"
+                    max="1"
+                    step="0.01"
+                    value={volume}
+                    onChange={handleVolumeChange}
+                    style={volumeSliderStyle}
+                    aria-label="Volume"
+                  />
+                </div>
+                <div style={controlsGroupStyle}>
+                  <div
+                    onClick={() => {
+                      setShowInfo((prev) => !prev);
+                      revealChrome();
+                    }}
+                    style={iconButtonStyle}
+                    title="Toggle Info"
+                  >
+                    <FaInfoCircle size={18} />
+                  </div>
+                  <div onClick={() => setShowQR(true)} style={iconButtonStyle} title="Share">
+                    <FaQrcode size={18} />
+                  </div>
+                  <div onClick={() => window.open(vid.url, '_blank')} style={iconButtonStyle} title="Download">
+                    <FaDownload size={18} />
+                  </div>
+                </div>
+              </div>
+              <div onClick={(e) => handleSeek(e, index)} style={progressWrapperStyle}>
+                <div style={progressTrackStyle}>
+                  <div ref={(el) => (progressRefs.current[index] = el)} style={progressFillStyle} />
+                </div>
               </div>
             </div>
           </div>
-        </div>
-      ))}
+        );
+      })}
 
       <div
         style={{
