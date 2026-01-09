@@ -76,7 +76,8 @@ export default function WatchMultiPage() {
       if (!video || !vid || !vid.url) return;
 
       if (isAudioItem(vid)) {
-        video.src = vid.url;
+        const audioSrc = getAudioProxyUrl(vid.url);
+        if (audioSrc) video.src = audioSrc;
       } else if (vid.url.endsWith('.m3u8')) {
         if (Hls.isSupported()) {
           const hls = new Hls();
@@ -153,6 +154,15 @@ export default function WatchMultiPage() {
     };
   }, []);
 
+  const getAudioProxyUrl = (url) => {
+    if (!url) return url;
+    if (url.startsWith('/api/proxy?url=')) return url;
+    if (url.startsWith('blob:') || url.startsWith('data:')) return url;
+    if (!/^https?:/i.test(url)) return url;
+    if (typeof window !== 'undefined' && url.startsWith(window.location.origin)) return url;
+    return `/api/proxy?url=${encodeURIComponent(url)}`;
+  };
+
   const isAudioUrl = (value) => {
     if (!value) return false;
     return /\.(mp3|m4a|aac|wav|ogg|flac)(\?|#|$)/i.test(value);
@@ -214,7 +224,8 @@ export default function WatchMultiPage() {
         unsubscribeError();
       });
 
-      wavesurfer.load(vid.url);
+      const audioSrc = getAudioProxyUrl(vid.url);
+      if (audioSrc) wavesurfer.load(audioSrc);
       wavesurferRefs.current[index] = wavesurfer;
     });
 
@@ -503,6 +514,7 @@ export default function WatchMultiPage() {
               controls={false}
               playsInline
               preload="auto"
+              crossOrigin="anonymous"
               onPlay={() => handlePlay(index)}
               onPause={() => handlePause(index)}
               onClick={() => {
