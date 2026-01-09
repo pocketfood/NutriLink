@@ -29,13 +29,6 @@ export default function WatchPage() {
 
   const isAudioContent = videoData && (videoData.type === 'audio' || isAudioUrl(videoData.url));
 
-  const getAudioProxyUrl = (value) => {
-    if (!value) return value;
-    if (value.startsWith('blob:') || value.startsWith('data:')) return value;
-    if (value.startsWith('/api/proxy?url=')) return value;
-    return `/api/proxy?url=${encodeURIComponent(value)}`;
-  };
-
   useEffect(() => {
     async function fetchVideo() {
       try {
@@ -58,7 +51,7 @@ export default function WatchPage() {
     const video = videoRef.current;
 
     if (isAudioContent) {
-      video.src = getAudioProxyUrl(videoData.url);
+      video.src = videoData.url;
     } else if (videoData.url.endsWith('.m3u8')) {
       if (Hls.isSupported()) {
         const hls = new Hls();
@@ -141,8 +134,7 @@ export default function WatchPage() {
       setWaveError('Waveform unavailable for this audio source.');
     });
 
-    const waveformUrl = getAudioProxyUrl(videoData.url);
-    wavesurfer.load(waveformUrl);
+    wavesurfer.load(videoData.url);
     wavesurferRef.current = wavesurfer;
 
     return () => {
