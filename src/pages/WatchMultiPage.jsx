@@ -17,7 +17,7 @@ export default function WatchMultiPage() {
   const [volume, setVolume] = useState(1);
   const [muted, setMuted] = useState(false);
   const [showQR, setShowQR] = useState(false);
-  const [showInfo, setShowInfo] = useState(true);
+  const [showInfo, setShowInfo] = useState(false);
   const [showChrome, setShowChrome] = useState(true);
   const [error, setError] = useState(null);
 
@@ -28,21 +28,32 @@ export default function WatchMultiPage() {
 
   useEffect(() => {
     async function fetchAllVideos() {
+      const ids = id.split(',').map((value) => value.trim()).filter(Boolean);
       try {
-        const ids = id.split(',');
         const blobs = await Promise.all(
           ids.map(async (blobId) => {
-            const res = await fetch(`https://ogoyhmlvdwypuizr.public.blob.vercel-storage.com/videos/${blobId}.json`);
-            if (!res.ok) throw new Error('Some video blobs could not be loaded');
-            const json = await res.json();
-            return json.videos || [];
+            try {
+              const res = await fetch(`https://ogoyhmlvdwypuizr.public.blob.vercel-storage.com/videos/${blobId}.json`);
+              if (res.status === 404) return [];
+              if (!res.ok) throw new Error(`Failed to load ${blobId}`);
+              const json = await res.json();
+              return Array.isArray(json.videos) ? json.videos : [];
+            } catch (err) {
+              console.warn('Skipping video blob:', blobId, err);
+              return [];
+            }
           })
         );
-        const flatList = blobs.flat();
+
+        const flatList = blobs.flat().filter((vid) => vid && vid.url);
         setVideoData(flatList);
+
         if (flatList.length > 0) {
           const first = flatList[0];
           setVolume(typeof first.volume === 'number' ? first.volume : 1);
+          setError(null);
+        } else {
+          setError(ids.length ? 'No videos available.' : 'No videos specified.');
         }
       } catch (err) {
         setError(err.message);
@@ -259,8 +270,74 @@ export default function WatchMultiPage() {
     backgroundColor: '#ffffff',
   };
 
+  const infoCardStyle = {
+    position: 'absolute',
+    left: '1rem',
+    bottom: 'calc(7.5rem + env(safe-area-inset-bottom))',
+    width: 'calc(100% - 2rem)',
+    maxWidth: '360px',
+    backgroundColor: 'rgba(6,16,32,0.85)',
+    color: '#e9f1ff',
+    padding: '0.9rem 1rem',
+    borderRadius: '12px',
+    border: '1px solid rgba(127,176,255,0.35)',
+    fontSize: '0.9rem',
+    zIndex: 20,
+  };
+
+  const infoLinkStyle = {
+    color: '#7fb0ff',
+    wordBreak: 'break-all',
+  };
+
   if (error) {
-    return <div style={{ color: 'white', textAlign: 'center', marginTop: '2rem' }}>{error}</div>;
+    return (
+      <div
+        style={{
+          minHeight: '100vh',
+          background: 'radial-gradient(circle at top, #1f4ea8 0%, #0b1a2f 55%, #050b16 100%)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '2rem',
+          color: '#e9f1ff',
+          textAlign: 'center',
+        }}
+      >
+        <div
+          style={{
+            backgroundColor: 'rgba(6,16,32,0.85)',
+            border: '2px dashed #2f66d6',
+            borderRadius: '18px',
+            padding: '2rem',
+            maxWidth: '460px',
+            width: '100%',
+            boxShadow: '0 14px 30px rgba(0,0,0,0.35)',
+          }}
+        >
+          <div style={{ fontSize: '3rem', fontWeight: 800, letterSpacing: '2px', color: '#7fb0ff' }}>404-ish</div>
+          <div style={{ fontSize: '1.05rem', marginTop: '0.4rem', color: '#cfe2ff' }}>
+            Some clips vanished into the couch cushions.
+          </div>
+          <p style={{ marginTop: '0.8rem', fontSize: '0.95rem', color: '#e9f1ff' }}>{error}</p>
+          <button
+            onClick={() => navigate('/')}
+            style={{
+              marginTop: '1.1rem',
+              backgroundColor: '#1f4ea8',
+              color: '#fff',
+              padding: '0.6rem 1.2rem',
+              borderRadius: '999px',
+              border: 'none',
+              cursor: 'pointer',
+              fontSize: '0.95rem',
+            }}
+          >
+            Back home
+          </button>
+        </div>
+      </div>
+    );
   }
 
   if (!videoData.length) {
@@ -331,7 +408,7 @@ export default function WatchMultiPage() {
             onClick={() => navigate('/')}
           />
 
-          {showInfo && (
+          {!showInfo && (
             <div
               style={{
                 position: 'absolute',
@@ -349,6 +426,30 @@ export default function WatchMultiPage() {
               {vid.description && (
                 <p style={{ margin: '0.5rem 0 0', fontSize: '0.9rem', color: '#ccc' }}>{vid.description}</p>
               )}
+            </div>
+          )}
+
+          {showInfo && (
+            <div style={infoCardStyle}>
+              <div style={{ fontWeight: 700, fontSize: '1rem' }}>{vid.filename || 'Untitled'}</div>
+              {vid.description && (
+                <div style={{ marginTop: '0.35rem', color: '#cfe2ff' }}>{vid.description}</div>
+              )}
+              <div style={{ marginTop: '0.6rem', fontSize: '0.82rem', color: '#d6e5ff' }}>
+                <div style={{ marginBottom: '0.35rem' }}>
+                  <span style={{ fontWeight: 600 }}>Author:</span> {vid.author || 'Anonymous'}
+                </div>
+                <div style={{ marginBottom: '0.35rem' }}>
+                  <span style={{ fontWeight: 600 }}>Link:</span>{' '}
+                  {vid.url ? (
+                    <a href={vid.url} target="_blank" rel="noreferrer" style={infoLinkStyle}>
+                      {vid.url}
+                    </a>
+                  ) : (
+                    'Unavailable'
+                  )}
+                </div>
+              </div>
             </div>
           )}
 
@@ -370,7 +471,14 @@ export default function WatchMultiPage() {
                 />
               </div>
               <div style={controlsGroupStyle}>
-                <div onClick={() => setShowInfo((prev) => !prev)} style={iconButtonStyle} title="Toggle Info">
+                <div
+                  onClick={() => {
+                    setShowInfo((prev) => !prev);
+                    revealChrome();
+                  }}
+                  style={iconButtonStyle}
+                  title="Toggle Info"
+                >
                   <FaInfoCircle size={18} />
                 </div>
                 <div onClick={() => setShowQR(true)} style={iconButtonStyle} title="Share">
