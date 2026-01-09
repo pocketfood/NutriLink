@@ -27,6 +27,7 @@ export default function WatchMultiPage() {
   const progressRefs = useRef([]);
   const waveformRefs = useRef([]);
   const wavesurferRefs = useRef([]);
+  const hlsRefs = useRef([]);
   const hideTimerRef = useRef(null);
   const playingIndexRef = useRef(null);
   const playingIsAudioRef = useRef(false);
@@ -71,16 +72,27 @@ export default function WatchMultiPage() {
   }, [id]);
 
   useEffect(() => {
+    hlsRefs.current.forEach((hls) => {
+      if (hls) hls.destroy();
+    });
+    hlsRefs.current = [];
+
     videoRefs.current.forEach((video, index) => {
       const vid = videoData[index];
       if (!video || !vid || !vid.url) return;
 
+      const mediaSrc = getMediaProxyUrl(vid.url);
+
       if (isAudioItem(vid)) {
-        const audioSrc = getAudioProxyUrl(vid.url);
-        if (audioSrc) video.src = audioSrc;
+        if (mediaSrc) video.src = mediaSrc;
       } else if (vid.url.endsWith('.m3u8')) {
         if (Hls.isSupported()) {
-          const hls = new Hls();
+          const hls = new Hls({
+            xhrSetup: (xhr, url) => {
+              xhr.open('GET', getMediaProxyUrl(url), true);
+            },
+            fetchSetup: (context, init) => new Request(getMediaProxyUrl(context.url), init),
+          });
           hls.loadSource(vid.url);
           hls.attachMedia(video);
           hls.on(Hls.Events.ERROR, (event, data) => {
@@ -88,17 +100,24 @@ export default function WatchMultiPage() {
               console.error(`HLS error on video ${index}:`, data);
             }
           });
+          hlsRefs.current[index] = hls;
         } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
           video.src = vid.url;
         } else {
           console.error('HLS not supported on this browser');
         }
       } else {
-        video.src = vid.url;
+        if (mediaSrc) video.src = mediaSrc;
       }
 
       video.loop = !!vid.loop;
     });
+    return () => {
+      hlsRefs.current.forEach((hls) => {
+        if (hls) hls.destroy();
+      });
+      hlsRefs.current = [];
+    };
   }, [videoData]);
 
   useEffect(() => {
@@ -154,7 +173,7 @@ export default function WatchMultiPage() {
     };
   }, []);
 
-  const getAudioProxyUrl = (url) => {
+  const getMediaProxyUrl = (url) => {
     if (!url) return url;
     if (url.startsWith('/api/proxy?url=')) return url;
     if (url.startsWith('blob:') || url.startsWith('data:')) return url;
@@ -224,7 +243,7 @@ export default function WatchMultiPage() {
         unsubscribeError();
       });
 
-      const audioSrc = getAudioProxyUrl(vid.url);
+      const audioSrc = getMediaProxyUrl(vid.url);
       if (audioSrc) wavesurfer.load(audioSrc);
       wavesurferRefs.current[index] = wavesurfer;
     });
