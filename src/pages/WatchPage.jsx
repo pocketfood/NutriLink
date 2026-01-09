@@ -12,8 +12,11 @@ export default function WatchPage() {
   const [showInfo, setShowInfo] = useState(false);
   const [muted, setMuted] = useState(false);
   const [volume, setVolume] = useState(1);
+  const [showChrome, setShowChrome] = useState(true);
   const videoRef = useRef(null);
   const progressRef = useRef(null);
+  const hideTimerRef = useRef(null);
+  const playingRef = useRef(false);
 
   useEffect(() => {
     async function fetchVideo() {
@@ -75,6 +78,36 @@ export default function WatchPage() {
     if (videoRef.current) videoRef.current.volume = volume;
   }, [volume]);
 
+  useEffect(() => {
+    return () => {
+      if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
+    };
+  }, []);
+
+  const scheduleHideChrome = () => {
+    if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
+    hideTimerRef.current = setTimeout(() => {
+      if (playingRef.current) setShowChrome(false);
+    }, 1600);
+  };
+
+  const revealChrome = () => {
+    setShowChrome(true);
+    if (playingRef.current) scheduleHideChrome();
+  };
+
+  const handlePlay = () => {
+    playingRef.current = true;
+    setShowChrome(true);
+    scheduleHideChrome();
+  };
+
+  const handlePause = () => {
+    playingRef.current = false;
+    setShowChrome(true);
+    if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
+  };
+
   const toggleMute = () => {
     if (videoRef.current) videoRef.current.muted = !muted;
     setMuted(!muted);
@@ -89,6 +122,78 @@ export default function WatchPage() {
     if (video && video.duration) {
       video.currentTime = percent * video.duration;
     }
+  };
+
+  const controlsBarStyle = {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    width: '100%',
+    padding: '0.75rem 1rem calc(0.9rem + env(safe-area-inset-bottom))',
+    background: 'linear-gradient(to top, rgba(0,0,0,0.75), rgba(0,0,0,0))',
+    borderRadius: '16px 16px 0 0',
+    boxSizing: 'border-box',
+    opacity: showChrome ? 1 : 0,
+    pointerEvents: showChrome ? 'auto' : 'none',
+    transition: 'opacity 0.35s ease',
+    zIndex: 12,
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '0.5rem',
+  };
+
+  const controlsRowStyle = {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '0.75rem',
+    flexWrap: 'wrap',
+    rowGap: '0.5rem',
+  };
+
+  const controlsGroupStyle = {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.5rem',
+  };
+
+  const iconButtonStyle = {
+    width: '34px',
+    height: '34px',
+    borderRadius: '999px',
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    border: '1px solid rgba(255,255,255,0.12)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    color: '#fff',
+    cursor: 'pointer',
+  };
+
+  const volumeSliderStyle = {
+    width: 'clamp(72px, 30vw, 120px)',
+    accentColor: '#ffffff',
+  };
+
+  const progressWrapperStyle = {
+    cursor: 'pointer',
+    padding: '0.2rem 0',
+  };
+
+  const progressTrackStyle = {
+    height: '6px',
+    width: '100%',
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    borderRadius: '999px',
+    overflow: 'hidden',
+  };
+
+  const progressFillStyle = {
+    height: '100%',
+    width: '0%',
+    backgroundColor: '#ffffff',
+    transition: 'width 0.1s linear',
   };
 
   if (error) {
@@ -109,13 +214,19 @@ export default function WatchPage() {
   }
 
   return (
-    <div style={{ position: 'relative', width: '100vw', height: '100vh', overflow: 'hidden', backgroundColor: 'black' }}>
+    <div
+      style={{ position: 'relative', width: '100%', height: '100vh', overflow: 'hidden', backgroundColor: 'black' }}
+      onMouseMove={revealChrome}
+      onTouchStart={revealChrome}
+    >
       <video
         ref={videoRef}
         autoPlay
         controls={false}
         playsInline
         preload="auto"
+        onPlay={handlePlay}
+        onPause={handlePause}
         onClick={() => {
           const video = videoRef.current;
           if (video) {
@@ -123,64 +234,31 @@ export default function WatchPage() {
           }
         }}
         style={{
-          width: '100vw',
+          width: '100%',
           height: '100vh',
           objectFit: 'contain',
           cursor: 'pointer',
         }}
       />
 
-      <Link to="/" style={{ position: 'absolute', top: '0.1rem', left: '0.11rem', zIndex: 10 }}>
+      <Link
+        to="/"
+        style={{
+          position: 'absolute',
+          top: '0.1rem',
+          left: '0.11rem',
+          zIndex: 10,
+          opacity: showChrome ? 1 : 0,
+          pointerEvents: showChrome ? 'auto' : 'none',
+          transition: 'opacity 0.35s ease',
+        }}
+      >
         <img
           src="/nutrilink-logo.png"
           alt="NutriLink"
           style={{ height: '150px', opacity: 0.95, pointerEvents: 'auto' }}
         />
       </Link>
-
-      <div
-        style={{
-          position: 'absolute',
-          top: '3%',
-          right: '2rem',
-          zIndex: 10,
-          display: 'flex',
-          flexDirection: 'column',
-          gap: '1.6rem',
-          alignItems: 'center',
-          color: 'white',
-        }}
-      >
-        <FaQrcode size={24} onClick={() => setShowQR(true)} style={{ cursor: 'pointer' }} title="Share" />
-        <FaDownload size={24} onClick={() => window.open(videoData.url, '_blank')} style={{ cursor: 'pointer' }} title="Download" />
-        {muted ? (
-          <FaVolumeMute size={24} onClick={toggleMute} style={{ cursor: 'pointer' }} title="Unmute" />
-        ) : (
-          <FaVolumeUp size={24} onClick={toggleMute} style={{ cursor: 'pointer' }} title="Mute" />
-        )}
-        <FaInfoCircle size={24} onClick={() => setShowInfo(!showInfo)} style={{ cursor: 'pointer' }} title="Info" />
-      </div>
-
-      <div style={{
-        position: 'absolute',
-        bottom: '4.2rem',
-        left: '1rem',
-        zIndex: 10,
-        color: '#fff',
-        fontSize: '12px'
-      }}>
-        <label>Volume</label>
-        <input
-          type="range"
-          min="0"
-          max="1"
-          step="0.01"
-          value={volume}
-          onChange={(e) => setVolume(parseFloat(e.target.value))}
-          style={{ marginLeft: '0.5rem' }}
-        />
-        <span style={{ marginLeft: '0.5rem' }}>{(volume * 100).toFixed(0)}%</span>
-      </div>
 
       {showInfo && (
         <div
@@ -195,6 +273,9 @@ export default function WatchPage() {
             fontSize: '14px',
             maxWidth: '250px',
             zIndex: 20,
+            opacity: showChrome ? 1 : 0,
+            pointerEvents: showChrome ? 'auto' : 'none',
+            transition: 'opacity 0.35s ease',
           }}
         >
           <strong>{videoData.filename || 'Untitled'}</strong>
@@ -203,38 +284,53 @@ export default function WatchPage() {
         </div>
       )}
 
-      <div
-        onClick={handleSeek}
-        style={{
-          position: 'absolute',
-          bottom: 10,
-          left: 0,
-          width: '100%',
-          height: '55px',
-          backgroundColor: '#333',
-          zIndex: 10,
-          cursor: 'pointer',
-        }}
-      >
-        <div
-          ref={progressRef}
-          style={{
-            height: '100%',
-            width: '0%',
-            backgroundColor: '#162557',
-            transition: 'width 0.1s linear',
-          }}
-        />
+      <div style={controlsBarStyle}>
+        <div style={controlsRowStyle}>
+          <div style={controlsGroupStyle}>
+            <div onClick={toggleMute} style={iconButtonStyle} title={muted ? 'Unmute' : 'Mute'}>
+              {muted ? <FaVolumeMute size={18} /> : <FaVolumeUp size={18} />}
+            </div>
+            <input
+              type="range"
+              min="0"
+              max="1"
+              step="0.01"
+              value={volume}
+              onChange={(e) => setVolume(parseFloat(e.target.value))}
+              style={volumeSliderStyle}
+              aria-label="Volume"
+            />
+          </div>
+          <div style={controlsGroupStyle}>
+            <div onClick={() => setShowInfo(!showInfo)} style={iconButtonStyle} title="Info">
+              <FaInfoCircle size={18} />
+            </div>
+            <div onClick={() => setShowQR(true)} style={iconButtonStyle} title="Share">
+              <FaQrcode size={18} />
+            </div>
+            <div onClick={() => window.open(videoData.url, '_blank')} style={iconButtonStyle} title="Download">
+              <FaDownload size={18} />
+            </div>
+          </div>
+        </div>
+        <div onClick={handleSeek} style={progressWrapperStyle}>
+          <div style={progressTrackStyle}>
+            <div ref={progressRef} style={progressFillStyle} />
+          </div>
+        </div>
       </div>
 
       <div
         style={{
           position: 'absolute',
-          bottom: '5rem',
+          bottom: 'calc(6rem + env(safe-area-inset-bottom))',
           left: '1rem',
           color: 'white',
           zIndex: 10,
           width: 'calc(100% - 5rem)',
+          opacity: showChrome ? 1 : 0,
+          pointerEvents: showChrome ? 'auto' : 'none',
+          transition: 'opacity 0.35s ease',
         }}
       >
         {videoData.filename && <h3 style={{ margin: 0, fontSize: '1.25rem' }}>{videoData.filename}</h3>}
@@ -250,8 +346,8 @@ export default function WatchPage() {
             position: 'fixed',
             top: 0,
             left: 0,
-            width: '100vw',
-            height: '100vh',
+            width: '100%',
+            height: '100%',
             backgroundColor: 'rgba(0,0,0,0.7)',
             display: 'flex',
             justifyContent: 'center',
