@@ -19,6 +19,7 @@ export default function WatchPage() {
   const progressRef = useRef(null);
   const waveformRef = useRef(null);
   const wavesurferRef = useRef(null);
+  const hlsRef = useRef(null);
   const hideTimerRef = useRef(null);
   const playingRef = useRef(false);
 
@@ -27,7 +28,7 @@ export default function WatchPage() {
     return /\.(mp3|m4a|aac|wav|ogg|flac)(\?|#|$)/i.test(value);
   };
 
-  const getAudioProxyUrl = (url) => {
+  const getMediaProxyUrl = (url) => {
     if (!url) return url;
     if (url.startsWith('/api/proxy?url=')) return url;
     if (url.startsWith('blob:') || url.startsWith('data:')) return url;
@@ -37,7 +38,8 @@ export default function WatchPage() {
   };
 
   const isAudioContent = videoData && (videoData.type === 'audio' || isAudioUrl(videoData.url));
-  const audioSrc = isAudioContent && videoData?.url ? getAudioProxyUrl(videoData.url) : null;
+  const mediaSrc = videoData?.url ? getMediaProxyUrl(videoData.url) : null;
+  const audioSrc = isAudioContent ? mediaSrc : null;
 
   useEffect(() => {
     async function fetchVideo() {
@@ -60,30 +62,47 @@ export default function WatchPage() {
 
     const video = videoRef.current;
 
+    if (hlsRef.current) {
+      hlsRef.current.destroy();
+      hlsRef.current = null;
+    }
+
     if (isAudioContent) {
       if (audioSrc) video.src = audioSrc;
     } else if (videoData.url.endsWith('.m3u8')) {
       if (Hls.isSupported()) {
-        const hls = new Hls();
+        const hls = new Hls({
+          xhrSetup: (xhr, url) => {
+            xhr.open('GET', getMediaProxyUrl(url), true);
+          },
+          fetchSetup: (context, init) => new Request(getMediaProxyUrl(context.url), init),
+        });
         hls.loadSource(videoData.url);
         hls.attachMedia(video);
         hls.on(Hls.Events.ERROR, (event, data) => {
           if (data.fatal) setError('Error loading video stream');
         });
+        hlsRef.current = hls;
       } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
         video.src = videoData.url;
       } else {
         setError('HLS is not supported in this browser');
       }
     } else {
-      video.src = videoData.url;
+      if (mediaSrc) video.src = mediaSrc;
     }
 
     video.loop = videoData.loop === true;
     video.volume = volume;
     video.muted = muted;
 
-  }, [videoData, isAudioContent, audioSrc]);
+    return () => {
+      if (hlsRef.current) {
+        hlsRef.current.destroy();
+        hlsRef.current = null;
+      }
+    };
+  }, [videoData, isAudioContent, audioSrc, mediaSrc]);
 
   useEffect(() => {
     const interval = setInterval(() => {
