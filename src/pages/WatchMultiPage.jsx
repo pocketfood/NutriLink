@@ -7,6 +7,8 @@ import {
   FaVolumeMute,
   FaVolumeUp,
   FaInfoCircle,
+  FaPlay,
+  FaPause,
 } from 'react-icons/fa';
 import Hls from 'hls.js';
 import WaveSurfer from 'wavesurfer.js';
@@ -22,6 +24,7 @@ export default function WatchMultiPage() {
   const [showChrome, setShowChrome] = useState(true);
   const [error, setError] = useState(null);
   const [waveErrors, setWaveErrors] = useState({});
+  const [playingStates, setPlayingStates] = useState({});
 
   const videoRefs = useRef([]);
   const progressRefs = useRef([]);
@@ -31,6 +34,8 @@ export default function WatchMultiPage() {
   const waveHoverRefs = useRef([]);
   const waveTimeRefs = useRef([]);
   const waveDurationRefs = useRef([]);
+  const seekTimeRefs = useRef([]);
+  const seekDurationRefs = useRef([]);
   const hideTimerRef = useRef(null);
   const playingIndexRef = useRef(null);
   const playingIsAudioRef = useRef(false);
@@ -73,6 +78,10 @@ export default function WatchMultiPage() {
 
     fetchAllVideos();
   }, [id]);
+
+  useEffect(() => {
+    setPlayingStates({});
+  }, [videoData]);
 
   useEffect(() => {
     hlsRefs.current.forEach((hls) => {
@@ -161,9 +170,18 @@ export default function WatchMultiPage() {
     const interval = setInterval(() => {
       videoRefs.current.forEach((video, i) => {
         const bar = progressRefs.current[i];
-        if (video && bar) {
-          const percent = (video.currentTime / video.duration) * 100;
+        if (!video) return;
+        const duration = Number.isFinite(video.duration) ? video.duration : 0;
+        const currentTime = Number.isFinite(video.currentTime) ? video.currentTime : 0;
+        if (bar) {
+          const percent = duration ? (currentTime / duration) * 100 : 0;
           bar.style.width = `${percent || 0}%`;
+        }
+        if (seekTimeRefs.current[i]) {
+          seekTimeRefs.current[i].textContent = formatTime(currentTime);
+        }
+        if (seekDurationRefs.current[i]) {
+          seekDurationRefs.current[i].textContent = formatTime(duration);
         }
       });
     }, 100);
@@ -197,24 +215,24 @@ export default function WatchMultiPage() {
     canvas.height = height;
     const ctx = canvas.getContext('2d');
     if (!ctx) {
-      return { waveColor: '#656666', progressColor: '#EE772F' };
+      return { waveColor: '#7fb0ff', progressColor: '#4da2ff' };
     }
 
     const gradient = ctx.createLinearGradient(0, 0, 0, height * 1.35);
-    gradient.addColorStop(0, '#656666');
-    gradient.addColorStop((height * 0.7) / height, '#656666');
+    gradient.addColorStop(0, '#7fb0ff');
+    gradient.addColorStop((height * 0.7) / height, '#7fb0ff');
     gradient.addColorStop((height * 0.7 + 1) / height, '#ffffff');
     gradient.addColorStop((height * 0.7 + 2) / height, '#ffffff');
-    gradient.addColorStop((height * 0.7 + 3) / height, '#B1B1B1');
-    gradient.addColorStop(1, '#B1B1B1');
+    gradient.addColorStop((height * 0.7 + 3) / height, '#4a6fd6');
+    gradient.addColorStop(1, '#4a6fd6');
 
     const progressGradient = ctx.createLinearGradient(0, 0, 0, height * 1.35);
-    progressGradient.addColorStop(0, '#EE772F');
-    progressGradient.addColorStop((height * 0.7) / height, '#EB4926');
+    progressGradient.addColorStop(0, '#4da2ff');
+    progressGradient.addColorStop((height * 0.7) / height, '#2f7fe6');
     progressGradient.addColorStop((height * 0.7 + 1) / height, '#ffffff');
     progressGradient.addColorStop((height * 0.7 + 2) / height, '#ffffff');
-    progressGradient.addColorStop((height * 0.7 + 3) / height, '#F6B094');
-    progressGradient.addColorStop(1, '#F6B094');
+    progressGradient.addColorStop((height * 0.7 + 3) / height, '#9bbcff');
+    progressGradient.addColorStop(1, '#9bbcff');
 
     return { waveColor: gradient, progressColor: progressGradient };
   };
@@ -332,6 +350,7 @@ export default function WatchMultiPage() {
     const isAudio = isAudioItem(videoData[index]);
     playingIndexRef.current = index;
     playingIsAudioRef.current = isAudio;
+    setPlayingStates((prev) => ({ ...prev, [index]: true }));
     setShowChrome(true);
     if (isAudio) {
       if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
@@ -345,6 +364,7 @@ export default function WatchMultiPage() {
       playingIndexRef.current = null;
       playingIsAudioRef.current = false;
     }
+    setPlayingStates((prev) => ({ ...prev, [index]: false }));
     setShowChrome(true);
     if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
   };
@@ -377,6 +397,16 @@ export default function WatchMultiPage() {
     if (!hover) return;
     hover.style.opacity = '0';
     hover.style.width = '0px';
+  };
+
+  const togglePlayback = (index) => {
+    const video = videoRefs.current[index];
+    if (!video) return;
+    if (video.paused) {
+      video.play().catch(() => {});
+    } else {
+      video.pause();
+    }
   };
 
   const toggleMute = () => {
@@ -452,6 +482,8 @@ export default function WatchMultiPage() {
   const progressWrapperStyle = {
     cursor: 'pointer',
     padding: '0.2rem 0',
+    flex: 1,
+    minWidth: 0,
   };
 
   const progressTrackStyle = {
@@ -466,6 +498,42 @@ export default function WatchMultiPage() {
     height: '100%',
     width: '0%',
     backgroundColor: '#ffffff',
+    transition: 'width 0.1s linear',
+  };
+
+  const seekRowStyle = {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.6rem',
+    width: '100%',
+  };
+
+  const seekButtonStyle = {
+    width: '30px',
+    height: '30px',
+    borderRadius: '999px',
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    border: '1px solid rgba(255,255,255,0.12)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    color: '#fff',
+    cursor: 'pointer',
+  };
+
+  const seekTimeStyle = {
+    minWidth: '3.4rem',
+    fontSize: '0.8rem',
+    color: '#cfe2ff',
+    fontVariantNumeric: 'tabular-nums',
+  };
+
+  const seekDurationStyle = {
+    minWidth: '3.4rem',
+    fontSize: '0.8rem',
+    color: '#cfe2ff',
+    fontVariantNumeric: 'tabular-nums',
+    textAlign: 'right',
   };
 
   const audioWaveWrapStyle = {
@@ -640,6 +708,7 @@ export default function WatchMultiPage() {
     >
       {videoData.map((vid, index) => {
         const isAudio = isAudioItem(vid);
+        const isPlaying = !!playingStates[index];
         return (
           <div
             key={index}
@@ -793,10 +862,22 @@ export default function WatchMultiPage() {
                   </div>
                 </div>
               </div>
-              <div onClick={(e) => handleSeek(e, index)} style={progressWrapperStyle}>
-                <div style={progressTrackStyle}>
-                  <div ref={(el) => (progressRefs.current[index] = el)} style={progressFillStyle} />
+              <div style={seekRowStyle}>
+                <button
+                  type="button"
+                  onClick={() => togglePlayback(index)}
+                  style={seekButtonStyle}
+                  aria-label={isPlaying ? 'Pause' : 'Play'}
+                >
+                  {isPlaying ? <FaPause size={14} /> : <FaPlay size={14} />}
+                </button>
+                <div ref={(el) => (seekTimeRefs.current[index] = el)} style={seekTimeStyle}>0:00</div>
+                <div onClick={(e) => handleSeek(e, index)} style={progressWrapperStyle}>
+                  <div style={progressTrackStyle}>
+                    <div ref={(el) => (progressRefs.current[index] = el)} style={progressFillStyle} />
+                  </div>
                 </div>
+                <div ref={(el) => (seekDurationRefs.current[index] = el)} style={seekDurationStyle}>0:00</div>
               </div>
             </div>
           </div>
