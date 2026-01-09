@@ -77,10 +77,16 @@ export default function WatchMultiPage() {
       }
 
       video.loop = !!vid.loop;
+    });
+  }, [videoData]);
+
+  useEffect(() => {
+    videoRefs.current.forEach((video) => {
+      if (!video) return;
       video.volume = volume;
       video.muted = muted;
     });
-  }, [videoData, volume, muted]);
+  }, [volume, muted, videoData]);
 
   useEffect(() => {
     const observer = new IntersectionObserver(
