@@ -9,6 +9,8 @@ import {
   FaInfoCircle,
   FaPlay,
   FaPause,
+  FaRedo,
+  FaStepForward,
 } from 'react-icons/fa';
 import Hls from 'hls.js';
 import WaveSurfer from 'wavesurfer.js';
@@ -25,8 +27,11 @@ export default function WatchMultiPage() {
   const [error, setError] = useState(null);
   const [waveErrors, setWaveErrors] = useState({});
   const [playingStates, setPlayingStates] = useState({});
+  const [loopStates, setLoopStates] = useState({});
+  const [autoPlayNext, setAutoPlayNext] = useState(true);
 
   const videoRefs = useRef([]);
+  const itemRefs = useRef([]);
   const progressRefs = useRef([]);
   const waveformRefs = useRef([]);
   const wavesurferRefs = useRef([]);
@@ -81,6 +86,7 @@ export default function WatchMultiPage() {
 
   useEffect(() => {
     setPlayingStates({});
+    setLoopStates({});
   }, [videoData]);
 
   useEffect(() => {
@@ -139,6 +145,16 @@ export default function WatchMultiPage() {
       video.muted = muted;
     });
   }, [volume, muted, videoData]);
+
+  useEffect(() => {
+    videoRefs.current.forEach((video, index) => {
+      if (!video) return;
+      const vid = videoData[index];
+      const defaultLoop = !!vid?.loop;
+      const loopValue = loopStates[index];
+      video.loop = loopValue ?? defaultLoop;
+    });
+  }, [loopStates, videoData]);
 
   useEffect(() => {
     const observer = new IntersectionObserver(
@@ -299,7 +315,7 @@ export default function WatchMultiPage() {
         }));
       });
       const unsubscribeInteraction = wavesurfer.on('interaction', () => {
-        wavesurfer.play().catch(() => {});
+        wavesurfer.playPause();
       });
       const unsubscribeDecode = wavesurfer.on('decode', (duration) => {
         if (waveDurationRefs.current[index]) {
@@ -409,6 +425,38 @@ export default function WatchMultiPage() {
     }
   };
 
+  const findNextAudioIndex = (startIndex) => {
+    for (let i = startIndex + 1; i < videoData.length; i += 1) {
+      if (isAudioItem(videoData[i])) return i;
+    }
+    return null;
+  };
+
+  const handleEnded = (index) => {
+    setPlayingStates((prev) => ({ ...prev, [index]: false }));
+    if (playingIndexRef.current === index) {
+      playingIndexRef.current = null;
+      playingIsAudioRef.current = false;
+    }
+    if (!autoPlayNext) return;
+    const vid = videoData[index];
+    if (!isAudioItem(vid)) return;
+    const loopValue = loopStates[index] ?? !!vid?.loop;
+    if (loopValue) return;
+    const nextIndex = findNextAudioIndex(index);
+    if (nextIndex === null) return;
+    const nextItem = itemRefs.current[nextIndex];
+    if (nextItem) {
+      nextItem.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+    const nextVideo = videoRefs.current[nextIndex];
+    if (nextVideo) {
+      setTimeout(() => {
+        nextVideo.play().catch(() => {});
+      }, 300);
+    }
+  };
+
   const toggleMute = () => {
     setMuted((prev) => {
       const newMuted = !prev;
@@ -417,6 +465,21 @@ export default function WatchMultiPage() {
       });
       return newMuted;
     });
+  };
+
+  const toggleLoop = (index) => {
+    const vid = videoData[index];
+    const defaultLoop = !!vid?.loop;
+    const currentLoop = loopStates[index];
+    const resolvedLoop = currentLoop ?? defaultLoop;
+    const nextLoop = !resolvedLoop;
+    setLoopStates((prev) => ({ ...prev, [index]: nextLoop }));
+    const video = videoRefs.current[index];
+    if (video) video.loop = nextLoop;
+  };
+
+  const toggleAutoPlayNext = () => {
+    setAutoPlayNext((prev) => !prev);
   };
 
   const handleVolumeChange = (e) => {
@@ -472,6 +535,11 @@ export default function WatchMultiPage() {
     justifyContent: 'center',
     color: '#fff',
     cursor: 'pointer',
+  };
+
+  const toggleActiveStyle = {
+    backgroundColor: 'rgba(77,162,255,0.35)',
+    border: '1px solid rgba(127,176,255,0.6)',
   };
 
   const volumeSliderStyle = {
@@ -709,9 +777,11 @@ export default function WatchMultiPage() {
       {videoData.map((vid, index) => {
         const isAudio = isAudioItem(vid);
         const isPlaying = !!playingStates[index];
+        const isLooping = loopStates[index] ?? !!vid.loop;
         return (
           <div
             key={index}
+            ref={(el) => (itemRefs.current[index] = el)}
             style={{
               position: 'relative',
               height: '100vh',
@@ -730,6 +800,7 @@ export default function WatchMultiPage() {
               crossOrigin="anonymous"
               onPlay={() => handlePlay(index)}
               onPause={() => handlePause(index)}
+              onEnded={() => handleEnded(index)}
               onClick={() => {
                 const v = videoRefs.current[index];
                 if (v.paused) v.play();
@@ -845,6 +916,20 @@ export default function WatchMultiPage() {
                 </div>
                 <div style={controlsGroupStyle}>
                   <div
+                    onClick={() => toggleLoop(index)}
+                    style={{ ...iconButtonStyle, ...(isLooping ? toggleActiveStyle : null) }}
+                    title={isLooping ? 'Disable Loop' : 'Enable Loop'}
+                  >
+                    <FaRedo size={16} color="#fff" />
+                  </div>
+                  <div
+                    onClick={toggleAutoPlayNext}
+                    style={{ ...iconButtonStyle, ...(autoPlayNext ? toggleActiveStyle : null) }}
+                    title={autoPlayNext ? 'Disable Auto-Play Next' : 'Enable Auto-Play Next'}
+                  >
+                    <FaStepForward size={16} color="#fff" />
+                  </div>
+                  <div
                     onClick={() => {
                       setShowInfo((prev) => !prev);
                       revealChrome();
@@ -869,7 +954,7 @@ export default function WatchMultiPage() {
                   style={seekButtonStyle}
                   aria-label={isPlaying ? 'Pause' : 'Play'}
                 >
-                  {isPlaying ? <FaPause size={14} /> : <FaPlay size={14} />}
+                  {isPlaying ? <FaPause size={16} color="#fff" /> : <FaPlay size={16} color="#fff" />}
                 </button>
                 <div ref={(el) => (seekTimeRefs.current[index] = el)} style={seekTimeStyle}>0:00</div>
                 <div onClick={(e) => handleSeek(e, index)} style={progressWrapperStyle}>
