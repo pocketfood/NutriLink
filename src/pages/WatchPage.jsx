@@ -196,11 +196,72 @@ export default function WatchPage() {
     transition: 'width 0.1s linear',
   };
 
+  const infoCardStyle = {
+    position: 'absolute',
+    top: '1rem',
+    right: '1rem',
+    width: 'calc(100% - 2rem)',
+    maxWidth: '340px',
+    backgroundColor: 'rgba(6,16,32,0.85)',
+    color: '#e9f1ff',
+    padding: '0.9rem 1rem',
+    borderRadius: '12px',
+    border: '1px solid rgba(127,176,255,0.35)',
+    fontSize: '0.9rem',
+    zIndex: 20,
+  };
+
+  const infoLinkStyle = {
+    color: '#7fb0ff',
+    wordBreak: 'break-all',
+  };
+
   if (error) {
     return (
-      <div style={{ textAlign: 'center', marginTop: '2rem', color: 'white' }}>
-        <h2>Error</h2>
-        <p>{error}</p>
+      <div
+        style={{
+          minHeight: '100vh',
+          background: 'radial-gradient(circle at top, #1f4ea8 0%, #0b1a2f 55%, #050b16 100%)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '2rem',
+          color: '#e9f1ff',
+          textAlign: 'center',
+        }}
+      >
+        <div
+          style={{
+            backgroundColor: 'rgba(6,16,32,0.85)',
+            border: '2px dashed #2f66d6',
+            borderRadius: '18px',
+            padding: '2rem',
+            maxWidth: '420px',
+            width: '100%',
+            boxShadow: '0 14px 30px rgba(0,0,0,0.35)',
+          }}
+        >
+          <div style={{ fontSize: '3rem', fontWeight: 800, letterSpacing: '2px', color: '#7fb0ff' }}>404</div>
+          <div style={{ fontSize: '1.05rem', marginTop: '0.4rem', color: '#cfe2ff' }}>
+            This video took a snack break and never came back.
+          </div>
+          <p style={{ marginTop: '0.8rem', fontSize: '0.95rem', color: '#e9f1ff' }}>{error}</p>
+          <Link
+            to="/"
+            style={{
+              display: 'inline-block',
+              marginTop: '1.1rem',
+              backgroundColor: '#1f4ea8',
+              color: '#fff',
+              padding: '0.6rem 1.2rem',
+              borderRadius: '999px',
+              textDecoration: 'none',
+              fontSize: '0.95rem',
+            }}
+          >
+            Back home
+          </Link>
+        </div>
       </div>
     );
   }
@@ -262,25 +323,30 @@ export default function WatchPage() {
 
       {showInfo && (
         <div
-          style={{
-            position: 'absolute',
-            top: '3rem',
-            right: '6rem',
-            backgroundColor: 'rgba(0,0,0,0.8)',
-            color: '#fff',
-            padding: '1rem',
-            borderRadius: '10px',
-            fontSize: '14px',
-            maxWidth: '250px',
-            zIndex: 20,
-            opacity: showChrome ? 1 : 0,
-            pointerEvents: showChrome ? 'auto' : 'none',
-            transition: 'opacity 0.35s ease',
-          }}
+          style={infoCardStyle}
         >
-          <strong>{videoData.filename || 'Untitled'}</strong>
-          <p style={{ marginTop: '0.5rem' }}>{videoData.description || 'No description available.'}</p>
-          <p><b>Loop:</b> {videoData.loop ? 'Yes' : 'No'}</p>
+          <div style={{ fontWeight: 700, fontSize: '1rem' }}>{videoData.filename || 'Untitled'}</div>
+          {videoData.description && (
+            <div style={{ marginTop: '0.35rem', color: '#cfe2ff' }}>{videoData.description}</div>
+          )}
+          <div style={{ marginTop: '0.6rem', fontSize: '0.82rem', color: '#d6e5ff' }}>
+            <div style={{ marginBottom: '0.35rem' }}>
+              <span style={{ fontWeight: 600 }}>Author:</span> {videoData.author || 'Anonymous'}
+            </div>
+            <div style={{ marginBottom: '0.35rem' }}>
+              <span style={{ fontWeight: 600 }}>Link:</span>{' '}
+              {videoData.url ? (
+                <a href={videoData.url} target="_blank" rel="noreferrer" style={infoLinkStyle}>
+                  {videoData.url}
+                </a>
+              ) : (
+                'Unavailable'
+              )}
+            </div>
+            <div>
+              <span style={{ fontWeight: 600 }}>Loop:</span> {videoData.loop ? 'Yes' : 'No'}
+            </div>
+          </div>
         </div>
       )}
 
@@ -302,7 +368,14 @@ export default function WatchPage() {
             />
           </div>
           <div style={controlsGroupStyle}>
-            <div onClick={() => setShowInfo(!showInfo)} style={iconButtonStyle} title="Info">
+            <div
+              onClick={() => {
+                setShowInfo((prev) => !prev);
+                revealChrome();
+              }}
+              style={iconButtonStyle}
+              title="Info"
+            >
               <FaInfoCircle size={18} />
             </div>
             <div onClick={() => setShowQR(true)} style={iconButtonStyle} title="Share">
