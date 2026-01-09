@@ -28,6 +28,9 @@ export default function WatchMultiPage() {
   const waveformRefs = useRef([]);
   const wavesurferRefs = useRef([]);
   const hlsRefs = useRef([]);
+  const waveHoverRefs = useRef([]);
+  const waveTimeRefs = useRef([]);
+  const waveDurationRefs = useRef([]);
   const hideTimerRef = useRef(null);
   const playingIndexRef = useRef(null);
   const playingIsAudioRef = useRef(false);
@@ -182,6 +185,40 @@ export default function WatchMultiPage() {
     return `/api/proxy?url=${encodeURIComponent(url)}`;
   };
 
+  const formatTime = (seconds = 0) => {
+    const minutes = Math.floor(seconds / 60);
+    const secondsRemainder = Math.round(seconds) % 60;
+    return `${minutes}:${`0${secondsRemainder}`.slice(-2)}`;
+  };
+
+  const createWaveformGradients = (container) => {
+    const height = container?.clientHeight || 96;
+    const canvas = document.createElement('canvas');
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      return { waveColor: '#656666', progressColor: '#EE772F' };
+    }
+
+    const gradient = ctx.createLinearGradient(0, 0, 0, height * 1.35);
+    gradient.addColorStop(0, '#656666');
+    gradient.addColorStop((height * 0.7) / height, '#656666');
+    gradient.addColorStop((height * 0.7 + 1) / height, '#ffffff');
+    gradient.addColorStop((height * 0.7 + 2) / height, '#ffffff');
+    gradient.addColorStop((height * 0.7 + 3) / height, '#B1B1B1');
+    gradient.addColorStop(1, '#B1B1B1');
+
+    const progressGradient = ctx.createLinearGradient(0, 0, 0, height * 1.35);
+    progressGradient.addColorStop(0, '#EE772F');
+    progressGradient.addColorStop((height * 0.7) / height, '#EB4926');
+    progressGradient.addColorStop((height * 0.7 + 1) / height, '#ffffff');
+    progressGradient.addColorStop((height * 0.7 + 2) / height, '#ffffff');
+    progressGradient.addColorStop((height * 0.7 + 3) / height, '#F6B094');
+    progressGradient.addColorStop(1, '#F6B094');
+
+    return { waveColor: gradient, progressColor: progressGradient };
+  };
+
   const isAudioUrl = (value) => {
     if (!value) return false;
     return /\.(mp3|m4a|aac|wav|ogg|flac)(\?|#|$)/i.test(value);
@@ -206,20 +243,25 @@ export default function WatchMultiPage() {
       const media = videoRefs.current[index];
       if (!container || !media) return;
 
+      if (waveTimeRefs.current[index]) waveTimeRefs.current[index].textContent = formatTime(0);
+      if (waveDurationRefs.current[index]) waveDurationRefs.current[index].textContent = formatTime(0);
+
+      const gradients = createWaveformGradients(container);
       const wavesurfer = WaveSurfer.create({
         container,
         height: 96,
-        waveColor: 'rgba(127,176,255,0.65)',
-        progressColor: '#ffffff',
+        waveColor: gradients.waveColor,
+        progressColor: gradients.progressColor,
         cursorColor: 'rgba(255,255,255,0.75)',
         cursorWidth: 1,
-        barWidth: 3,
+        barWidth: 2,
         barGap: 2,
         barRadius: 2,
         barMinHeight: 2,
         barHeight: 0.9,
         normalize: true,
-        interact: false,
+        interact: true,
+        dragToSeek: true,
         backend: 'MediaElement',
         media,
       });
@@ -238,9 +280,25 @@ export default function WatchMultiPage() {
           [index]: 'Waveform unavailable for this audio source.',
         }));
       });
+      const unsubscribeInteraction = wavesurfer.on('interaction', () => {
+        wavesurfer.play().catch(() => {});
+      });
+      const unsubscribeDecode = wavesurfer.on('decode', (duration) => {
+        if (waveDurationRefs.current[index]) {
+          waveDurationRefs.current[index].textContent = formatTime(duration);
+        }
+      });
+      const unsubscribeTimeupdate = wavesurfer.on('timeupdate', (currentTime) => {
+        if (waveTimeRefs.current[index]) {
+          waveTimeRefs.current[index].textContent = formatTime(currentTime);
+        }
+      });
       cleanups.push(() => {
         unsubscribeReady();
         unsubscribeError();
+        unsubscribeInteraction();
+        unsubscribeDecode();
+        unsubscribeTimeupdate();
       });
 
       const audioSrc = getMediaProxyUrl(vid.url);
@@ -300,6 +358,25 @@ export default function WatchMultiPage() {
     if (video && video.duration) {
       video.currentTime = percent * video.duration;
     }
+  };
+
+  const handleWavePointerMove = (event, index) => {
+    const hover = waveHoverRefs.current[index];
+    if (!hover) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    const x = Math.min(Math.max(event.clientX - rect.left, 0), rect.width);
+    hover.style.width = `${x}px`;
+  };
+
+  const handleWavePointerEnter = (index) => {
+    if (waveHoverRefs.current[index]) waveHoverRefs.current[index].style.opacity = '1';
+  };
+
+  const handleWavePointerLeave = (index) => {
+    const hover = waveHoverRefs.current[index];
+    if (!hover) return;
+    hover.style.opacity = '0';
+    hover.style.width = '0px';
   };
 
   const toggleMute = () => {
@@ -398,7 +475,7 @@ export default function WatchMultiPage() {
     top: '40%',
     transform: 'translateY(-50%)',
     zIndex: 4,
-    pointerEvents: 'none',
+    pointerEvents: 'auto',
   };
 
   const audioWaveStyle = {
@@ -411,6 +488,53 @@ export default function WatchMultiPage() {
     padding: '0.4rem 0.6rem',
     boxSizing: 'border-box',
     position: 'relative',
+    cursor: 'pointer',
+    overflow: 'hidden',
+  };
+
+  const audioWaveCanvasStyle = {
+    width: '100%',
+    height: '100%',
+  };
+
+  const audioWaveHoverStyle = {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    height: '100%',
+    width: '0px',
+    mixBlendMode: 'overlay',
+    background: 'rgba(255,255,255,0.5)',
+    opacity: 0,
+    transition: 'opacity 0.2s ease',
+    pointerEvents: 'none',
+    zIndex: 2,
+  };
+
+  const audioWaveTimeStyle = {
+    position: 'absolute',
+    left: '0.4rem',
+    top: '50%',
+    transform: 'translateY(-50%)',
+    fontSize: '11px',
+    background: 'rgba(0,0,0,0.75)',
+    padding: '2px',
+    color: '#ddd',
+    pointerEvents: 'none',
+    zIndex: 3,
+  };
+
+  const audioWaveDurationStyle = {
+    position: 'absolute',
+    right: '0.4rem',
+    top: '50%',
+    transform: 'translateY(-50%)',
+    fontSize: '11px',
+    background: 'rgba(0,0,0,0.75)',
+    padding: '2px',
+    color: '#ddd',
+    pointerEvents: 'none',
+    zIndex: 3,
   };
 
   const audioWaveMessageStyle = {
@@ -424,6 +548,7 @@ export default function WatchMultiPage() {
     color: '#cfe2ff',
     padding: '0.5rem',
     pointerEvents: 'none',
+    zIndex: 4,
   };
 
   const infoCardStyle = {
@@ -548,6 +673,7 @@ export default function WatchMultiPage() {
                 backgroundColor: 'black',
                 cursor: 'pointer',
                 opacity: isAudio ? 0 : 1,
+                pointerEvents: isAudio ? 'none' : 'auto',
                 transition: 'opacity 0.35s ease',
               }}
             />
@@ -571,7 +697,16 @@ export default function WatchMultiPage() {
 
             {isAudio && (
               <div style={audioWaveWrapStyle}>
-                <div ref={(el) => (waveformRefs.current[index] = el)} style={audioWaveStyle}>
+                <div
+                  style={audioWaveStyle}
+                  onPointerMove={(event) => handleWavePointerMove(event, index)}
+                  onPointerEnter={() => handleWavePointerEnter(index)}
+                  onPointerLeave={() => handleWavePointerLeave(index)}
+                >
+                  <div ref={(el) => (waveformRefs.current[index] = el)} style={audioWaveCanvasStyle} />
+                  <div ref={(el) => (waveHoverRefs.current[index] = el)} style={audioWaveHoverStyle} />
+                  <div ref={(el) => (waveTimeRefs.current[index] = el)} style={audioWaveTimeStyle}>0:00</div>
+                  <div ref={(el) => (waveDurationRefs.current[index] = el)} style={audioWaveDurationStyle}>0:00</div>
                   {waveErrors[index] && <div style={audioWaveMessageStyle}>{waveErrors[index]}</div>}
                 </div>
               </div>
