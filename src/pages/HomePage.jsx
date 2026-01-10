@@ -275,7 +275,7 @@ function HomePage() {
       </div>
 
       <div style={{ textAlign: 'center', color: '#888', fontSize: '12px' }}>
-        © 2025 NutriLink. All rights reserved.
+        © 2026 NutriLink. All rights reserved.
       </div>
 
       <style>{`
@@ -289,3 +289,4 @@ function HomePage() {
 }
 
 export default HomePage;
+
