@@ -35,6 +35,9 @@ export default function MultiTrackPage() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [loopEnabled, setLoopEnabled] = useState(false);
   const [error, setError] = useState(null);
+  const [title, setTitle] = useState('');
+  const [author, setAuthor] = useState('Anonymous');
+  const [description, setDescription] = useState('');
   const [shareUrl, setShareUrl] = useState('');
   const [saveError, setSaveError] = useState(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -114,6 +117,9 @@ export default function MultiTrackPage() {
     setTrackMix({});
     setIsReady(false);
     setIsPlaying(false);
+    setTitle('');
+    setAuthor('Anonymous');
+    setDescription('');
     setShareUrl('');
   };
 
@@ -192,6 +198,15 @@ export default function MultiTrackPage() {
             ? data.videos.map((track) => ({ url: track.url }))
             : [];
         if (!savedTracks.length) throw new Error('No tracks found in this session');
+        const loadedTitle = typeof data.title === 'string'
+          ? data.title
+          : typeof data.filename === 'string'
+            ? data.filename
+            : '';
+        const loadedAuthor = typeof data.author === 'string' && data.author.trim()
+          ? data.author
+          : 'Anonymous';
+        const loadedDescription = typeof data.description === 'string' ? data.description : '';
         nextIdRef.current = 0;
         const nextTracks = savedTracks.map((track, index) =>
           buildTrack(track.url, index, track)
@@ -205,6 +220,9 @@ export default function MultiTrackPage() {
         });
         setTracks(nextTracks);
         setTrackMix(nextMix);
+        setTitle(loadedTitle);
+        setAuthor(loadedAuthor);
+        setDescription(loadedDescription);
         if (typeof data.zoom === 'number') setZoom(data.zoom);
         setLoopEnabled(!!data.loopEnabled);
         if (typeof window !== 'undefined') {
@@ -298,6 +316,9 @@ export default function MultiTrackPage() {
     setSaveError(null);
     try {
       const newId = sessionIdRef.current || Math.random().toString(36).substring(2, 8);
+      const sessionTitle = title.trim() || 'Untitled Session';
+      const sessionAuthor = author.trim() || 'Anonymous';
+      const sessionDescription = description.trim();
       const savedTracks = tracks.map((track, index) => {
         const mix = trackMix[index] || {};
         return {
@@ -316,6 +337,9 @@ export default function MultiTrackPage() {
         type: 'studio',
         tracks: savedTracks,
         videos: savedTracks.map((track) => ({ url: track.url })),
+        title: sessionTitle,
+        author: sessionAuthor,
+        description: sessionDescription,
         zoom,
         loopEnabled,
       };
@@ -328,6 +352,9 @@ export default function MultiTrackPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to save session');
       sessionIdRef.current = newId;
+      setTitle(sessionTitle);
+      setAuthor(sessionAuthor);
+      setDescription(sessionDescription);
       if (typeof window !== 'undefined') {
         setShareUrl(`${window.location.origin}/studio/${newId}`);
       }
@@ -436,6 +463,10 @@ export default function MultiTrackPage() {
     padding: '0.6rem 0.75rem',
   };
 
+  const displayTitle = title.trim() || 'Untitled Session';
+  const displayAuthor = author.trim() || 'Anonymous';
+  const displayDescription = description.trim();
+
   return (
     <div style={pageStyle}>
       <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1.5rem' }}>
@@ -448,10 +479,47 @@ export default function MultiTrackPage() {
         <div>
           <h1 style={{ margin: 0, fontSize: '1.8rem' }}>Multi-Track Studio</h1>
           <p style={{ margin: 0, color: '#cfe2ff' }}>Paste audio links, stack tracks, and mix like a DAW.</p>
+          <div style={{ marginTop: '0.5rem', color: '#cfe2ff' }}>
+            <div style={{ fontWeight: 600 }}>{displayTitle}</div>
+            <div style={{ fontSize: '0.9rem' }}>By {displayAuthor}</div>
+            {displayDescription && <div style={{ marginTop: '0.35rem' }}>{displayDescription}</div>}
+          </div>
         </div>
       </div>
 
       <div style={{ ...cardStyle, marginBottom: '1.5rem' }}>
+        <div style={{ display: 'grid', gap: '0.75rem', marginBottom: '1rem' }}>
+          <div>
+            <label style={{ display: 'block', marginBottom: '0.4rem', fontWeight: 600 }}>Session title</label>
+            <input
+              type="text"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="Untitled Session"
+              style={fieldStyle}
+            />
+          </div>
+          <div>
+            <label style={{ display: 'block', marginBottom: '0.4rem', fontWeight: 600 }}>Author</label>
+            <input
+              type="text"
+              value={author}
+              onChange={(e) => setAuthor(e.target.value)}
+              placeholder="Anonymous"
+              style={fieldStyle}
+            />
+          </div>
+          <div>
+            <label style={{ display: 'block', marginBottom: '0.4rem', fontWeight: 600 }}>Description</label>
+            <textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="Add a short description for this session"
+              rows={2}
+              style={{ ...fieldStyle, resize: 'vertical' }}
+            />
+          </div>
+        </div>
         <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600 }}>
           Add audio URLs (comma or newline separated)
         </label>
