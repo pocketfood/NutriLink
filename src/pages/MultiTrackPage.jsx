@@ -75,106 +75,6 @@ export default function MultiTrackPage() {
       .map((entry) => entry.trim())
       .filter(Boolean);
 
-  const encodeWav = (audioBuffer) => {
-    const numChannels = audioBuffer.numberOfChannels;
-    const sampleRate = audioBuffer.sampleRate;
-    const numSamples = audioBuffer.length;
-    const bytesPerSample = 2;
-    const blockAlign = numChannels * bytesPerSample;
-    const buffer = new ArrayBuffer(44 + numSamples * blockAlign);
-    const view = new DataView(buffer);
-
-    const writeString = (offset, string) => {
-      for (let i = 0; i < string.length; i += 1) {
-        view.setUint8(offset + i, string.charCodeAt(i));
-      }
-    };
-
-    writeString(0, 'RIFF');
-    view.setUint32(4, 36 + numSamples * blockAlign, true);
-    writeString(8, 'WAVE');
-    writeString(12, 'fmt ');
-    view.setUint32(16, 16, true);
-    view.setUint16(20, 1, true);
-    view.setUint16(22, numChannels, true);
-    view.setUint32(24, sampleRate, true);
-    view.setUint32(28, sampleRate * blockAlign, true);
-    view.setUint16(32, blockAlign, true);
-    view.setUint16(34, 16, true);
-    writeString(36, 'data');
-    view.setUint32(40, numSamples * blockAlign, true);
-
-    let offset = 44;
-    for (let i = 0; i < numSamples; i += 1) {
-      for (let channel = 0; channel < numChannels; channel += 1) {
-        const channelData = audioBuffer.getChannelData(channel);
-        let sample = channelData[i];
-        sample = Math.max(-1, Math.min(1, sample));
-        view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
-        offset += bytesPerSample;
-      }
-    }
-
-    return buffer;
-  };
-
-  const blobToDataUrl = (blob) =>
-    new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result);
-      reader.onerror = () => reject(new Error('Failed to encode audio mix'));
-      reader.readAsDataURL(blob);
-    });
-
-  const createMixdownBlob = async () => {
-    const audioContext = new AudioContext();
-    try {
-      const decoded = await Promise.all(
-        tracks.map(async (track, index) => {
-          const mix = trackMix[index] || {};
-          const gain = mix.muted ? 0 : typeof mix.volume === 'number' ? mix.volume : track.volume ?? 1;
-          if (gain <= 0) return null;
-          const sourceUrl = track.sourceUrl || track.url;
-          const response = await fetch(getMediaProxyUrl(sourceUrl));
-          if (!response.ok) {
-            throw new Error(`Failed to fetch track ${index + 1}`);
-          }
-          const arrayBuffer = await response.arrayBuffer();
-          const buffer = await audioContext.decodeAudioData(arrayBuffer);
-          const startPosition = typeof track.startPosition === 'number' ? track.startPosition : 0;
-          return { buffer, startPosition, gain };
-        })
-      );
-
-      const activeTracks = decoded.filter(Boolean);
-      if (!activeTracks.length) {
-        throw new Error('All tracks are muted.');
-      }
-
-      const sampleRate = audioContext.sampleRate || 44100;
-      const maxDuration = Math.max(
-        ...activeTracks.map((track) => track.startPosition + track.buffer.duration)
-      );
-      const totalSamples = Math.max(1, Math.ceil(maxDuration * sampleRate));
-      const offline = new OfflineAudioContext(2, totalSamples, sampleRate);
-
-      activeTracks.forEach((track) => {
-        const source = offline.createBufferSource();
-        const gainNode = offline.createGain();
-        source.buffer = track.buffer;
-        gainNode.gain.value = track.gain;
-        source.connect(gainNode).connect(offline.destination);
-        source.start(track.startPosition);
-      });
-
-      const rendered = await offline.startRendering();
-      const wavBuffer = encodeWav(rendered);
-      return new Blob([wavBuffer], { type: 'audio/wav' });
-    } finally {
-      audioContext.close();
-    }
-  };
-
   const buildTrack = (url, index, overrides = {}) => {
     const palette = TRACK_COLORS[index % TRACK_COLORS.length];
     return {
@@ -435,18 +335,6 @@ export default function MultiTrackPage() {
       const sessionAuthor = author.trim() || 'Anonymous';
       const sessionDescription = description.trim();
       const sessionVideoUrl = videoUrl.trim();
-      const mixBlob = await createMixdownBlob();
-      const dataUrl = await blobToDataUrl(mixBlob);
-      const uploadRes = await fetch('/api/upload-audio', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: newId, dataUrl }),
-      });
-      const uploadData = await uploadRes.json();
-      if (!uploadRes.ok) {
-        throw new Error(uploadData.error || 'Failed to upload audio mix');
-      }
-      const mixUrl = uploadData.url;
       const savedTracks = tracks.map((track, index) => {
         const mix = trackMix[index] || {};
         return {
@@ -463,8 +351,6 @@ export default function MultiTrackPage() {
       const payload = {
         id: newId,
         type: 'studio',
-        url: mixUrl,
-        mixUrl,
         videoUrl: sessionVideoUrl || undefined,
         tracks: savedTracks,
         videos: savedTracks.map((track) => ({ url: track.url })),
