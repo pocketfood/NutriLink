@@ -10,6 +10,7 @@ export default function App() {
       <Route path="/" element={<HomePage />} />
       <Route path="/v/:id" element={<WatchPage />} />
       <Route path="/studio" element={<MultiTrackPage />} />
+      <Route path="/studio/:id" element={<MultiTrackPage />} />
       <Route path="/m/:id" element={<WatchMultiPage />} /> {/* ← NEW route */}
     </Routes>
   );
