@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import {
   FaPlay,
   FaPause,
@@ -19,6 +19,7 @@ const TRACK_COLORS = [
 ];
 
 export default function MultiTrackPage() {
+  const { id } = useParams();
   const navigate = useNavigate();
   const containerRef = useRef(null);
   const multitrackRef = useRef(null);
@@ -34,8 +35,13 @@ export default function MultiTrackPage() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [loopEnabled, setLoopEnabled] = useState(false);
   const [error, setError] = useState(null);
+  const [shareUrl, setShareUrl] = useState('');
+  const [saveError, setSaveError] = useState(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isLoadingSession, setIsLoadingSession] = useState(false);
   const loopEnabledRef = useRef(false);
   const loopArmedRef = useRef(false);
+  const sessionIdRef = useRef(null);
 
   const getMediaProxyUrl = (url) => {
     if (!url) return url;
@@ -52,14 +58,14 @@ export default function MultiTrackPage() {
       .map((entry) => entry.trim())
       .filter(Boolean);
 
-  const buildTrack = (url, index) => {
+  const buildTrack = (url, index, overrides = {}) => {
     const palette = TRACK_COLORS[index % TRACK_COLORS.length];
     return {
       id: nextIdRef.current++,
       sourceUrl: url,
       url: getMediaProxyUrl(url),
-      startPosition: 0,
-      volume: 1,
+      startPosition: typeof overrides.startPosition === 'number' ? overrides.startPosition : 0,
+      volume: typeof overrides.volume === 'number' ? overrides.volume : 1,
       options: {
         waveColor: palette.wave,
         progressColor: palette.progress,
@@ -99,10 +105,12 @@ export default function MultiTrackPage() {
     lastTimeRef.current = 0;
     lastPlayingRef.current = false;
     loopArmedRef.current = false;
+    sessionIdRef.current = null;
     setTracks([]);
     setTrackMix({});
     setIsReady(false);
     setIsPlaying(false);
+    setShareUrl('');
   };
 
   useEffect(() => {
@@ -165,6 +173,51 @@ export default function MultiTrackPage() {
   }, [zoom]);
 
   useEffect(() => {
+    const loadSession = async () => {
+      if (!id) return;
+      sessionIdRef.current = id;
+      setIsLoadingSession(true);
+      setSaveError(null);
+      try {
+        const res = await fetch(`https://ogoyhmlvdwypuizr.public.blob.vercel-storage.com/videos/${id}.json`);
+        if (!res.ok) throw new Error('Session not found or expired');
+        const data = await res.json();
+        const savedTracks = Array.isArray(data.tracks)
+          ? data.tracks
+          : Array.isArray(data.videos)
+            ? data.videos.map((track) => ({ url: track.url }))
+            : [];
+        if (!savedTracks.length) throw new Error('No tracks found in this session');
+        nextIdRef.current = 0;
+        const nextTracks = savedTracks.map((track, index) =>
+          buildTrack(track.url, index, track)
+        );
+        const nextMix = {};
+        savedTracks.forEach((track, index) => {
+          nextMix[index] = {
+            muted: !!track.muted,
+            volume: typeof track.volume === 'number' ? track.volume : 1,
+          };
+        });
+        setTracks(nextTracks);
+        setTrackMix(nextMix);
+        if (typeof data.zoom === 'number') setZoom(data.zoom);
+        setLoopEnabled(!!data.loopEnabled);
+        if (typeof window !== 'undefined') {
+          setShareUrl(`${window.location.origin}/studio/${id}`);
+        }
+        setError(null);
+      } catch (err) {
+        setError(err.message);
+      } finally {
+        setIsLoadingSession(false);
+      }
+    };
+
+    loadSession();
+  }, [id]);
+
+  useEffect(() => {
     loopEnabledRef.current = loopEnabled;
   }, [loopEnabled]);
 
@@ -176,10 +229,9 @@ export default function MultiTrackPage() {
         const maxDuration = multitrack.maxDuration || 0;
         if (maxDuration > 0) {
           const currentTime = multitrack.getCurrentTime();
-          if (!loopArmedRef.current && currentTime >= maxDuration - 0.05) {
+          if (!loopArmedRef.current && currentTime >= maxDuration - 0.005) {
             loopArmedRef.current = true;
             multitrack.setTime(0);
-            multitrack.play();
           }
           if (loopArmedRef.current && currentTime < 0.25) {
             loopArmedRef.current = false;
@@ -207,6 +259,64 @@ export default function MultiTrackPage() {
   const toggleLoop = () => {
     setLoopEnabled((prev) => !prev);
     loopArmedRef.current = false;
+  };
+
+  const saveSession = async () => {
+    if (!tracks.length) {
+      setSaveError('Add at least one track before saving.');
+      return;
+    }
+    setIsSaving(true);
+    setSaveError(null);
+    try {
+      const newId = sessionIdRef.current || Math.random().toString(36).substring(2, 8);
+      const savedTracks = tracks.map((track, index) => {
+        const mix = trackMix[index] || {};
+        return {
+          url: track.sourceUrl || track.url,
+          startPosition: typeof track.startPosition === 'number' ? track.startPosition : 0,
+          volume: typeof mix.volume === 'number'
+            ? mix.volume
+            : typeof track.volume === 'number'
+              ? track.volume
+              : 1,
+          muted: !!mix.muted,
+        };
+      });
+      const payload = {
+        id: newId,
+        type: 'studio',
+        tracks: savedTracks,
+        videos: savedTracks.map((track) => ({ url: track.url })),
+        zoom,
+        loopEnabled,
+      };
+
+      const res = await fetch('/api/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to save session');
+      sessionIdRef.current = newId;
+      if (typeof window !== 'undefined') {
+        setShareUrl(`${window.location.origin}/studio/${newId}`);
+      }
+    } catch (err) {
+      setSaveError(err.message);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const copyShareUrl = async () => {
+    if (!shareUrl || !navigator.clipboard) return;
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+    } catch (err) {
+      setSaveError('Failed to copy link.');
+    }
   };
 
   const seekBy = (seconds) => {
@@ -289,6 +399,15 @@ export default function MultiTrackPage() {
     border: '1px solid rgba(127,176,255,0.6)',
   };
 
+  const fieldStyle = {
+    width: '100%',
+    backgroundColor: 'rgba(0,0,0,0.35)',
+    border: '1px solid rgba(127,176,255,0.25)',
+    borderRadius: '12px',
+    color: '#e9f1ff',
+    padding: '0.6rem 0.75rem',
+  };
+
   return (
     <div style={pageStyle}>
       <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1.5rem' }}>
@@ -313,15 +432,7 @@ export default function MultiTrackPage() {
           onChange={(e) => setUrlInput(e.target.value)}
           placeholder="https://...mp3"
           rows={3}
-          style={{
-            width: '100%',
-            backgroundColor: 'rgba(0,0,0,0.35)',
-            border: '1px solid rgba(127,176,255,0.25)',
-            borderRadius: '12px',
-            color: '#e9f1ff',
-            padding: '0.75rem',
-            resize: 'vertical',
-          }}
+          style={{ ...fieldStyle, resize: 'vertical' }}
         />
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem', marginTop: '0.9rem' }}>
           <button type="button" onClick={addTracks} style={buttonStyle}>
@@ -330,8 +441,30 @@ export default function MultiTrackPage() {
           <button type="button" onClick={resetTracks} style={buttonStyle}>
             Reset Session
           </button>
+          <button
+            type="button"
+            onClick={saveSession}
+            style={{ ...buttonStyle, ...(isSaving ? controlButtonDisabledStyle : null) }}
+            aria-disabled={isSaving}
+          >
+            {isSaving ? 'Saving...' : 'Save Session'}
+          </button>
           {error && <span style={{ color: '#ffb4b4' }}>{error}</span>}
         </div>
+        {shareUrl && (
+          <div style={{ marginTop: '0.9rem' }}>
+            <label style={{ display: 'block', marginBottom: '0.4rem', fontWeight: 600 }}>
+              Shareable link
+            </label>
+            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+              <input type="text" readOnly value={shareUrl} style={{ ...fieldStyle, flex: 1 }} />
+              <button type="button" onClick={copyShareUrl} style={buttonStyle}>
+                Copy
+              </button>
+            </div>
+          </div>
+        )}
+        {saveError && <div style={{ marginTop: '0.6rem', color: '#ffb4b4' }}>{saveError}</div>}
       </div>
 
       <div style={{ ...cardStyle, marginBottom: '1.5rem' }}>
@@ -380,7 +513,12 @@ export default function MultiTrackPage() {
             overflow: 'hidden',
           }}
         />
-        {!tracks.length && (
+        {isLoadingSession && (
+          <div style={{ marginTop: '1rem', color: '#cfe2ff', fontSize: '0.9rem' }}>
+            Loading session...
+          </div>
+        )}
+        {!tracks.length && !isLoadingSession && (
           <div style={{ marginTop: '1rem', color: '#cfe2ff', fontSize: '0.9rem' }}>
             Add at least one audio URL to start building your multitrack session.
           </div>
