@@ -18,6 +18,7 @@ export default function WatchPage() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [loopEnabled, setLoopEnabled] = useState(false);
   const videoRef = useRef(null);
+  const audioRef = useRef(null);
   const progressRef = useRef(null);
   const waveformRef = useRef(null);
   const wavesurferRef = useRef(null);
@@ -78,9 +79,18 @@ export default function WatchPage() {
     return { waveColor: gradient, progressColor: progressGradient };
   };
 
-  const isAudioContent = videoData && (videoData.type === 'audio' || isAudioUrl(videoData.url));
+  const hasStudioVideo = Boolean(videoData?.videoUrl);
+  const mixUrl = videoData?.mixUrl || (videoData?.type === 'studio' && isAudioUrl(videoData?.url) ? videoData.url : null);
+  const isAudioContent = videoData && !hasStudioVideo && (videoData.type === 'audio' || isAudioUrl(videoData.url));
   const mediaSrc = videoData?.url ? getMediaProxyUrl(videoData.url) : null;
-  const audioSrc = isAudioContent ? mediaSrc : null;
+  const audioSrc = mixUrl ? getMediaProxyUrl(mixUrl) : isAudioContent ? mediaSrc : null;
+  const videoSrc = mixUrl
+    ? hasStudioVideo
+      ? getMediaProxyUrl(videoData.videoUrl)
+      : null
+    : mediaSrc;
+  const primaryMediaRef = mixUrl ? audioRef : videoRef;
+  const downloadUrl = mixUrl || videoData?.url;
 
   useEffect(() => {
     async function fetchVideo() {
@@ -89,7 +99,7 @@ export default function WatchPage() {
         if (!res.ok) throw new Error('Video not found or expired');
         const data = await res.json();
         setVideoData(data);
-        setLoopEnabled(Boolean(data.loop));
+        setLoopEnabled(Boolean(data.loop ?? data.loopEnabled));
         if (typeof data.volume === 'number') setVolume(data.volume);
       } catch (err) {
         setError(err.message);
@@ -100,42 +110,44 @@ export default function WatchPage() {
   }, [id]);
 
   useEffect(() => {
-    if (!videoData || !videoRef.current) return;
+    if (!videoData) return;
 
     const video = videoRef.current;
+    const audio = audioRef.current;
 
     if (hlsRef.current) {
       hlsRef.current.destroy();
       hlsRef.current = null;
     }
 
-    if (isAudioContent) {
-      if (audioSrc) video.src = audioSrc;
-    } else if (videoData.url.endsWith('.m3u8')) {
-      if (Hls.isSupported()) {
-        const hls = new Hls({
-          xhrSetup: (xhr, url) => {
-            xhr.open('GET', getMediaProxyUrl(url), true);
-          },
-          fetchSetup: (context, init) => new Request(getMediaProxyUrl(context.url), init),
-        });
-        hls.loadSource(videoData.url);
-        hls.attachMedia(video);
-        hls.on(Hls.Events.ERROR, (event, data) => {
-          if (data.fatal) setError('Error loading video stream');
-        });
-        hlsRef.current = hls;
-      } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-        video.src = videoData.url;
-      } else {
-        setError('HLS is not supported in this browser');
-      }
-    } else {
-      if (mediaSrc) video.src = mediaSrc;
+    if (audio && audioSrc) {
+      audio.src = audioSrc;
     }
 
-    video.volume = volume;
-    video.muted = muted;
+    if (video && videoSrc) {
+      if (videoSrc.endsWith('.m3u8')) {
+        if (Hls.isSupported()) {
+          const hls = new Hls({
+            xhrSetup: (xhr, url) => {
+              xhr.open('GET', getMediaProxyUrl(url), true);
+            },
+            fetchSetup: (context, init) => new Request(getMediaProxyUrl(context.url), init),
+          });
+          hls.loadSource(videoSrc);
+          hls.attachMedia(video);
+          hls.on(Hls.Events.ERROR, (event, data) => {
+            if (data.fatal) setError('Error loading video stream');
+          });
+          hlsRef.current = hls;
+        } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+          video.src = videoSrc;
+        } else {
+          setError('HLS is not supported in this browser');
+        }
+      } else {
+        video.src = videoSrc;
+      }
+    }
 
     return () => {
       if (hlsRef.current) {
@@ -143,15 +155,15 @@ export default function WatchPage() {
         hlsRef.current = null;
       }
     };
-  }, [videoData, isAudioContent, audioSrc, mediaSrc]);
+  }, [videoData, audioSrc, videoSrc]);
 
   useEffect(() => {
     const interval = setInterval(() => {
-      const video = videoRef.current;
+      const media = primaryMediaRef.current;
       const bar = progressRef.current;
-      if (!video) return;
-      const duration = Number.isFinite(video.duration) ? video.duration : 0;
-      const currentTime = Number.isFinite(video.currentTime) ? video.currentTime : 0;
+      if (!media) return;
+      const duration = Number.isFinite(media.duration) ? media.duration : 0;
+      const currentTime = Number.isFinite(media.currentTime) ? media.currentTime : 0;
       if (bar) {
         const percent = duration ? (currentTime / duration) * 100 : 0;
         bar.style.width = `${percent}%`;
@@ -160,15 +172,25 @@ export default function WatchPage() {
       if (seekDurationRef.current) seekDurationRef.current.textContent = formatTime(duration);
     }, 100);
     return () => clearInterval(interval);
-  }, []);
+  }, [primaryMediaRef]);
 
   useEffect(() => {
-    if (videoRef.current) videoRef.current.volume = volume;
-  }, [volume]);
+    const media = primaryMediaRef.current;
+    if (media) media.volume = volume;
+    if (mixUrl && videoRef.current) videoRef.current.volume = 0;
+  }, [volume, mixUrl, primaryMediaRef]);
 
   useEffect(() => {
-    if (videoRef.current) videoRef.current.loop = loopEnabled;
-  }, [loopEnabled]);
+    const media = primaryMediaRef.current;
+    if (media) media.loop = loopEnabled;
+    if (mixUrl && videoRef.current) videoRef.current.loop = loopEnabled;
+  }, [loopEnabled, mixUrl, primaryMediaRef]);
+
+  useEffect(() => {
+    const media = primaryMediaRef.current;
+    if (media) media.muted = muted;
+    if (mixUrl && videoRef.current) videoRef.current.muted = true;
+  }, [muted, mixUrl, primaryMediaRef]);
 
   useEffect(() => {
     if (!isAudioContent || !audioSrc) {
@@ -181,7 +203,7 @@ export default function WatchPage() {
     }
 
     const container = waveformRef.current;
-    const media = videoRef.current;
+    const media = mixUrl ? audioRef.current : videoRef.current;
     if (!container || !media) return;
 
     if (wavesurferRef.current) {
@@ -248,6 +270,37 @@ export default function WatchPage() {
   }, [isAudioContent]);
 
   useEffect(() => {
+    if (!mixUrl || !videoSrc) return;
+    const audio = audioRef.current;
+    const video = videoRef.current;
+    if (!audio || !video) return;
+
+    const syncVideo = () => {
+      if (Math.abs(video.currentTime - audio.currentTime) > 0.2) {
+        video.currentTime = audio.currentTime;
+      }
+    };
+
+    const handlePlay = () => {
+      video.play().catch(() => {});
+    };
+
+    const handlePause = () => {
+      video.pause();
+    };
+
+    audio.addEventListener('play', handlePlay);
+    audio.addEventListener('pause', handlePause);
+    audio.addEventListener('timeupdate', syncVideo);
+
+    return () => {
+      audio.removeEventListener('play', handlePlay);
+      audio.removeEventListener('pause', handlePause);
+      audio.removeEventListener('timeupdate', syncVideo);
+    };
+  }, [mixUrl, videoSrc]);
+
+  useEffect(() => {
     return () => {
       if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
     };
@@ -281,7 +334,8 @@ export default function WatchPage() {
   };
 
   const toggleMute = () => {
-    if (videoRef.current) videoRef.current.muted = !muted;
+    const media = primaryMediaRef.current;
+    if (media) media.muted = !muted;
     setMuted(!muted);
   };
 
@@ -290,23 +344,26 @@ export default function WatchPage() {
   };
 
   const handleSeek = (e) => {
-    const video = videoRef.current;
+    const media = primaryMediaRef.current;
     const bar = e.currentTarget;
     const rect = bar.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const percent = x / rect.width;
-    if (video && video.duration) {
-      video.currentTime = percent * video.duration;
+    if (media && media.duration) {
+      media.currentTime = percent * media.duration;
+      if (mixUrl && videoRef.current) {
+        videoRef.current.currentTime = media.currentTime;
+      }
     }
   };
 
   const togglePlayback = () => {
-    const video = videoRef.current;
-    if (!video) return;
-    if (video.paused) {
-      video.play().catch(() => {});
+    const media = primaryMediaRef.current;
+    if (!media) return;
+    if (media.paused) {
+      media.play().catch(() => {});
     } else {
-      video.pause();
+      media.pause();
     }
   };
 
@@ -609,6 +666,17 @@ export default function WatchPage() {
       onMouseMove={revealChrome}
       onTouchStart={revealChrome}
     >
+      {mixUrl && (
+        <audio
+          ref={audioRef}
+          autoPlay
+          preload="auto"
+          crossOrigin="anonymous"
+          onPlay={handlePlay}
+          onPause={handlePause}
+          style={{ display: 'none' }}
+        />
+      )}
       <video
         ref={videoRef}
         autoPlay
@@ -618,12 +686,7 @@ export default function WatchPage() {
         crossOrigin="anonymous"
         onPlay={handlePlay}
         onPause={handlePause}
-        onClick={() => {
-          const video = videoRef.current;
-          if (video) {
-            video.paused ? video.play() : video.pause();
-          }
-        }}
+        onClick={togglePlayback}
         style={{
           width: '100%',
           height: '100vh',
@@ -738,7 +801,7 @@ export default function WatchPage() {
             <div onClick={() => setShowQR(true)} style={iconButtonStyle} title="Share">
               <FaQrcode size={18} />
             </div>
-            <div onClick={() => window.open(videoData.url, '_blank')} style={iconButtonStyle} title="Download">
+            <div onClick={() => downloadUrl && window.open(downloadUrl, '_blank')} style={iconButtonStyle} title="Download">
               <FaDownload size={18} />
             </div>
           </div>
