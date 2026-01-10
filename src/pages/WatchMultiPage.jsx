@@ -216,6 +216,17 @@ export default function WatchMultiPage() {
     if (url.startsWith('blob:') || url.startsWith('data:')) return url;
     if (!/^https?:/i.test(url)) return url;
     if (typeof window !== 'undefined' && url.startsWith(window.location.origin)) return url;
+    try {
+      const hostname = new URL(url).hostname;
+      if (
+        hostname === 'public.blob.vercel-storage.com' ||
+        hostname.endsWith('.public.blob.vercel-storage.com')
+      ) {
+        return url;
+      }
+    } catch {
+      return url;
+    }
     return `/api/proxy?url=${encodeURIComponent(url)}`;
   };
 
