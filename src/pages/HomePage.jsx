@@ -10,9 +10,14 @@ function HomePage() {
   const [description, setDescription] = useState('');
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
+  const isStudio = mode === 'studio';
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (mode === 'studio') {
+      navigate('/studio');
+      return;
+    }
     if (!url) return;
     setLoading(true);
 
@@ -100,9 +105,44 @@ function HomePage() {
           >
             Audio
           </span>
+          <span
+            onClick={() => setMode('studio')}
+            style={{
+              cursor: 'pointer',
+              marginLeft: '1rem',
+              textDecoration: mode === 'studio' ? 'underline' : 'none',
+              fontWeight: mode === 'studio' ? 'bold' : 'normal',
+              color: mode === 'studio' ? '#2f62cc' : '#666',
+            }}
+          >
+            Studio
+          </span>
         </div>
 
         <form onSubmit={handleSubmit}>
+          {isStudio ? (
+            <div style={{ marginBottom: '1rem' }}>
+              <p style={{ color: '#4a4a4a', marginBottom: '1rem' }}>
+                Build a multi-track audio session from multiple links with DAW-style controls.
+              </p>
+              <button
+                type="button"
+                onClick={() => navigate('/studio')}
+                style={{
+                  padding: '0.5rem 1.5rem',
+                  fontSize: '14px',
+                  backgroundColor: '#2f62cc',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '4px',
+                  cursor: 'pointer'
+                }}
+              >
+                Open Multi-Track Studio
+              </button>
+            </div>
+          ) : (
+            <>
           <input
             type="text"
             placeholder={mode === 'audio'
@@ -190,6 +230,8 @@ function HomePage() {
           >
             {loading ? 'Uploading...' : `Generate ${mode === 'audio' ? 'Audio' : 'Video'} Link`}
           </button>
+            </>
+          )}
         </form>
 
         {loading && (
@@ -213,7 +255,7 @@ function HomePage() {
           </div>
         )}
 
-        {!loading && (
+        {!loading && !isStudio && (
           <div style={{ marginTop: '2rem', fontSize: '14px', color: '#444' }}>
             <ol style={{ textAlign: 'left', display: 'inline-block', lineHeight: '1.6' }}>
               <li><strong>Paste a direct {mode} link</strong> (e.g. {mode === 'audio' ? 'MP3' : 'MP4'})</li>
@@ -223,6 +265,11 @@ function HomePage() {
               <li><strong>Generate a shareable link</strong></li>
             </ol>
             <p><a href="/help" style={{ color: '#00f', textDecoration: 'underline' }}>Need help?</a></p>
+            <p>
+              <a href="/studio" style={{ color: '#2f62cc', textDecoration: 'underline' }}>
+                Open Multi-Track Studio
+              </a>
+            </p>
           </div>
         )}
       </div>
