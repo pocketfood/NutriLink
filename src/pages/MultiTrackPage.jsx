@@ -6,6 +6,7 @@ import {
   FaForward,
   FaBackward,
   FaPlus,
+  FaRedo,
   FaVolumeMute,
   FaVolumeUp,
 } from 'react-icons/fa';
@@ -31,7 +32,10 @@ export default function MultiTrackPage() {
   const [zoom, setZoom] = useState(20);
   const [isReady, setIsReady] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [loopEnabled, setLoopEnabled] = useState(false);
   const [error, setError] = useState(null);
+  const loopEnabledRef = useRef(false);
+  const loopArmedRef = useRef(false);
 
   const getMediaProxyUrl = (url) => {
     if (!url) return url;
@@ -94,6 +98,7 @@ export default function MultiTrackPage() {
     }
     lastTimeRef.current = 0;
     lastPlayingRef.current = false;
+    loopArmedRef.current = false;
     setTracks([]);
     setTrackMix({});
     setIsReady(false);
@@ -159,6 +164,34 @@ export default function MultiTrackPage() {
     }
   }, [zoom]);
 
+  useEffect(() => {
+    loopEnabledRef.current = loopEnabled;
+  }, [loopEnabled]);
+
+  useEffect(() => {
+    let rafId = 0;
+    const tick = () => {
+      const multitrack = multitrackRef.current;
+      if (multitrack && loopEnabledRef.current && multitrack.isPlaying()) {
+        const maxDuration = multitrack.maxDuration || 0;
+        if (maxDuration > 0) {
+          const currentTime = multitrack.getCurrentTime();
+          if (!loopArmedRef.current && currentTime >= maxDuration - 0.05) {
+            loopArmedRef.current = true;
+            multitrack.setTime(0);
+            multitrack.play();
+          }
+          if (loopArmedRef.current && currentTime < 0.25) {
+            loopArmedRef.current = false;
+          }
+        }
+      }
+      rafId = requestAnimationFrame(tick);
+    };
+    rafId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(rafId);
+  }, []);
+
   const togglePlay = () => {
     const multitrack = multitrackRef.current;
     if (!multitrack) return;
@@ -169,6 +202,11 @@ export default function MultiTrackPage() {
       multitrack.play();
       setIsPlaying(true);
     }
+  };
+
+  const toggleLoop = () => {
+    setLoopEnabled((prev) => !prev);
+    loopArmedRef.current = false;
   };
 
   const seekBy = (seconds) => {
@@ -240,6 +278,17 @@ export default function MultiTrackPage() {
     cursor: 'pointer',
   };
 
+  const controlButtonDisabledStyle = {
+    opacity: 0.5,
+    cursor: 'not-allowed',
+    pointerEvents: 'none',
+  };
+
+  const toggleActiveStyle = {
+    backgroundColor: 'rgba(77,162,255,0.35)',
+    border: '1px solid rgba(127,176,255,0.6)',
+  };
+
   return (
     <div style={pageStyle}>
       <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1.5rem' }}>
@@ -287,14 +336,27 @@ export default function MultiTrackPage() {
 
       <div style={{ ...cardStyle, marginBottom: '1.5rem' }}>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem', alignItems: 'center' }}>
-          <button type="button" onClick={togglePlay} style={controlButtonStyle} disabled={!isReady}>
-            {isPlaying ? <FaPause size={16} color="#fff" /> : <FaPlay size={16} color="#fff" />}
+          <button
+            type="button"
+            onClick={togglePlay}
+            style={{ ...controlButtonStyle, ...(!isReady ? controlButtonDisabledStyle : null) }}
+            aria-disabled={!isReady}
+          >
+            {isPlaying ? <FaPause size={18} color="#fff" /> : <FaPlay size={18} color="#fff" />}
           </button>
           <button type="button" onClick={() => seekBy(-10)} style={controlButtonStyle}>
             <FaBackward size={14} color="#fff" />
           </button>
           <button type="button" onClick={() => seekBy(10)} style={controlButtonStyle}>
             <FaForward size={14} color="#fff" />
+          </button>
+          <button
+            type="button"
+            onClick={toggleLoop}
+            style={{ ...controlButtonStyle, ...(loopEnabled ? toggleActiveStyle : null) }}
+            title={loopEnabled ? 'Disable Loop' : 'Enable Loop'}
+          >
+            <FaRedo size={14} color="#fff" />
           </button>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
             <span style={{ fontSize: '0.85rem', color: '#cfe2ff' }}>Zoom</span>
