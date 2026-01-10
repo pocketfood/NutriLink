@@ -3,7 +3,14 @@ import { useParams, Link } from 'react-router-dom';
 import QRCode from 'react-qr-code';
 import { FaDownload, FaQrcode, FaVolumeMute, FaVolumeUp, FaInfoCircle, FaPlay, FaPause, FaRedo } from 'react-icons/fa';
 import WaveSurfer from 'wavesurfer.js';
+import Multitrack from 'wavesurfer-multitrack';
 import Hls from 'hls.js';
+
+const STUDIO_TRACK_COLORS = [
+  { wave: 'rgba(127,176,255,0.7)', progress: '#4da2ff' },
+  { wave: 'rgba(95,150,255,0.7)', progress: '#3b86ff' },
+  { wave: 'rgba(150,196,255,0.7)', progress: '#6aa6ff' },
+];
 
 export default function WatchPage() {
   const { id } = useParams();
@@ -21,6 +28,12 @@ export default function WatchPage() {
   const audioRef = useRef(null);
   const progressRef = useRef(null);
   const waveformRef = useRef(null);
+  const studioWaveRef = useRef(null);
+  const studioRef = useRef(null);
+  const studioLoopArmedRef = useRef(false);
+  const studioWasPlayingRef = useRef(false);
+  const studioPlayIntentRef = useRef(false);
+  const loopEnabledRef = useRef(false);
   const wavesurferRef = useRef(null);
   const hlsRef = useRef(null);
   const waveHoverRef = useRef(null);
@@ -90,18 +103,41 @@ export default function WatchPage() {
     return { waveColor: gradient, progressColor: progressGradient };
   };
 
+  const setPlayingState = (playing) => {
+    playingRef.current = playing;
+    setIsPlaying(playing);
+  };
+
+  const applyStudioVolumes = () => {
+    const multitrack = studioRef.current;
+    if (!multitrack) return;
+    studioTracks.forEach((track, index) => {
+      const baseVolume = typeof track.volume === 'number' ? track.volume : 1;
+      const trackMuted = !!track.muted;
+      const effectiveVolume = muted || trackMuted ? 0 : baseVolume * volume;
+      multitrack.setTrackVolume(index, effectiveVolume);
+    });
+  };
+
+  const studioTracks = Array.isArray(videoData?.tracks)
+    ? videoData.tracks
+    : videoData?.type === 'studio' && Array.isArray(videoData?.videos)
+      ? videoData.videos
+      : [];
+  const useStudioPlayback = studioTracks.length > 0;
   const hasStudioVideo = Boolean(videoData?.videoUrl);
-  const mixUrl = videoData?.mixUrl || (videoData?.type === 'studio' && isAudioUrl(videoData?.url) ? videoData.url : null);
-  const isAudioContent = videoData && !hasStudioVideo && (videoData.type === 'audio' || isAudioUrl(videoData.url));
+  const mixUrl = useStudioPlayback
+    ? null
+    : videoData?.mixUrl || (videoData?.type === 'studio' && isAudioUrl(videoData?.url) ? videoData.url : null);
+  const isAudioContent =
+    !useStudioPlayback && videoData && !hasStudioVideo && (videoData.type === 'audio' || isAudioUrl(videoData.url));
+  const isAudioOnlyPlayback = isAudioContent || (useStudioPlayback && !hasStudioVideo);
+  const showWaveform = isAudioContent || useStudioPlayback;
   const mediaSrc = videoData?.url ? getMediaProxyUrl(videoData.url) : null;
   const audioSrc = mixUrl ? getMediaProxyUrl(mixUrl) : isAudioContent ? mediaSrc : null;
-  const videoSrc = mixUrl
-    ? hasStudioVideo
-      ? getMediaProxyUrl(videoData.videoUrl)
-      : null
-    : mediaSrc;
+  const videoSrc = hasStudioVideo ? getMediaProxyUrl(videoData.videoUrl) : mixUrl ? null : mediaSrc;
   const primaryMediaRef = mixUrl ? audioRef : videoRef;
-  const downloadUrl = mixUrl || videoData?.url;
+  const downloadUrl = mixUrl || videoData?.url || videoData?.videoUrl;
 
   useEffect(() => {
     async function fetchVideo() {
@@ -119,6 +155,10 @@ export default function WatchPage() {
 
     fetchVideo();
   }, [id]);
+
+  useEffect(() => {
+    loopEnabledRef.current = loopEnabled;
+  }, [loopEnabled]);
 
   useEffect(() => {
     if (!videoData) return;
@@ -158,6 +198,9 @@ export default function WatchPage() {
       } else {
         video.src = videoSrc;
       }
+    } else if (video) {
+      video.removeAttribute('src');
+      video.load();
     }
 
     return () => {
@@ -169,9 +212,100 @@ export default function WatchPage() {
   }, [videoData, audioSrc, videoSrc]);
 
   useEffect(() => {
+    if (!useStudioPlayback || !studioWaveRef.current) {
+      if (studioRef.current) {
+        studioRef.current.destroy();
+        studioRef.current = null;
+      }
+      return;
+    }
+
+    if (studioRef.current) {
+      studioRef.current.destroy();
+      studioRef.current = null;
+    }
+
+    studioLoopArmedRef.current = false;
+    studioWasPlayingRef.current = false;
+    studioPlayIntentRef.current = false;
+    setPlayingState(false);
+
+    const trackItems = studioTracks.map((track, index) => {
+      const palette = STUDIO_TRACK_COLORS[index % STUDIO_TRACK_COLORS.length];
+      return {
+        id: index,
+        url: getMediaProxyUrl(track.url),
+        startPosition: typeof track.startPosition === 'number' ? track.startPosition : 0,
+        volume: typeof track.volume === 'number' ? track.volume : 1,
+        draggable: false,
+        options: {
+          waveColor: palette.wave,
+          progressColor: palette.progress,
+          barWidth: 2,
+          barGap: 2,
+          barRadius: 2,
+          height: 56,
+        },
+      };
+    });
+
+    const multitrack = Multitrack.create(trackItems, {
+      container: studioWaveRef.current,
+      minPxPerSec: 22,
+      rightButtonDrag: false,
+      cursorWidth: 2,
+      cursorColor: '#7fb0ff',
+      trackBackground: '#0b1324',
+      trackBorderColor: 'rgba(127,176,255,0.25)',
+    });
+
+    studioRef.current = multitrack;
+    const unsubscribeCanPlay = multitrack.on('canplay', () => {
+      applyStudioVolumes();
+      studioPlayIntentRef.current = true;
+      multitrack.play();
+    });
+
+    return () => {
+      unsubscribeCanPlay();
+      multitrack.destroy();
+      studioRef.current = null;
+    };
+  }, [useStudioPlayback, studioTracks]);
+
+  useEffect(() => {
     const interval = setInterval(() => {
-      const media = primaryMediaRef.current;
       const bar = progressRef.current;
+      if (useStudioPlayback && studioRef.current) {
+        const multitrack = studioRef.current;
+        const duration = Number.isFinite(multitrack.maxDuration) ? multitrack.maxDuration : 0;
+        const currentTime = Number.isFinite(multitrack.getCurrentTime()) ? multitrack.getCurrentTime() : 0;
+        if (bar) {
+          const percent = duration ? (currentTime / duration) * 100 : 0;
+          bar.style.width = `${percent}%`;
+        }
+        if (seekTimeRef.current) seekTimeRef.current.textContent = formatTime(currentTime);
+        if (seekDurationRef.current) seekDurationRef.current.textContent = formatTime(duration);
+        if (waveTimeRef.current) waveTimeRef.current.textContent = formatTime(currentTime);
+        if (waveDurationRef.current) waveDurationRef.current.textContent = formatTime(duration);
+        const isPlayingNow = multitrack.isPlaying();
+        if (playingRef.current !== isPlayingNow) setPlayingState(isPlayingNow);
+        if (hasStudioVideo && videoRef.current) {
+          const video = videoRef.current;
+          if (Math.abs(video.currentTime - currentTime) > 0.2) {
+            video.currentTime = currentTime;
+          }
+          if (isPlayingNow && video.paused) {
+            video.play().catch(() => {});
+          }
+          if (!isPlayingNow && !video.paused) {
+            video.pause();
+          }
+        }
+        return;
+      }
+
+      const media = primaryMediaRef.current;
       if (!media) return;
       const duration = Number.isFinite(media.duration) ? media.duration : 0;
       const currentTime = Number.isFinite(media.currentTime) ? media.currentTime : 0;
@@ -183,25 +317,39 @@ export default function WatchPage() {
       if (seekDurationRef.current) seekDurationRef.current.textContent = formatTime(duration);
     }, 100);
     return () => clearInterval(interval);
-  }, [primaryMediaRef]);
+  }, [primaryMediaRef, useStudioPlayback, hasStudioVideo]);
 
   useEffect(() => {
+    if (useStudioPlayback) {
+      applyStudioVolumes();
+      if (hasStudioVideo && videoRef.current) {
+        videoRef.current.volume = 0;
+        videoRef.current.muted = true;
+      }
+      return;
+    }
     const media = primaryMediaRef.current;
-    if (media) media.volume = volume;
-    if (mixUrl && videoRef.current) videoRef.current.volume = 0;
-  }, [volume, mixUrl, primaryMediaRef]);
+    if (media) {
+      media.volume = volume;
+      media.muted = muted;
+    }
+    if (mixUrl && videoRef.current) {
+      videoRef.current.volume = 0;
+      videoRef.current.muted = true;
+    }
+  }, [volume, muted, mixUrl, useStudioPlayback, hasStudioVideo, primaryMediaRef, studioTracks]);
 
   useEffect(() => {
+    if (useStudioPlayback) {
+      if (hasStudioVideo && videoRef.current) {
+        videoRef.current.loop = loopEnabled;
+      }
+      return;
+    }
     const media = primaryMediaRef.current;
     if (media) media.loop = loopEnabled;
     if (mixUrl && videoRef.current) videoRef.current.loop = loopEnabled;
-  }, [loopEnabled, mixUrl, primaryMediaRef]);
-
-  useEffect(() => {
-    const media = primaryMediaRef.current;
-    if (media) media.muted = muted;
-    if (mixUrl && videoRef.current) videoRef.current.muted = true;
-  }, [muted, mixUrl, primaryMediaRef]);
+  }, [loopEnabled, mixUrl, useStudioPlayback, hasStudioVideo, primaryMediaRef]);
 
   useEffect(() => {
     if (!isAudioContent || !audioSrc) {
@@ -275,10 +423,43 @@ export default function WatchPage() {
   }, [isAudioContent, audioSrc]);
 
   useEffect(() => {
-    if (!isAudioContent) return;
+    if (!isAudioOnlyPlayback) return;
     setShowChrome(true);
     if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
-  }, [isAudioContent]);
+  }, [isAudioOnlyPlayback]);
+
+  useEffect(() => {
+    let rafId = 0;
+    const tick = () => {
+      if (useStudioPlayback && studioRef.current) {
+        const multitrack = studioRef.current;
+        const maxDuration = multitrack.maxDuration || 0;
+        const currentTime = multitrack.getCurrentTime();
+        const isPlayingNow = multitrack.isPlaying();
+
+        if (loopEnabledRef.current && maxDuration > 0) {
+          const nearLoopPoint = currentTime >= maxDuration - 0.01;
+          const nearEnd = currentTime >= maxDuration - 0.2;
+
+          if (isPlayingNow && nearLoopPoint && !studioLoopArmedRef.current) {
+            studioLoopArmedRef.current = true;
+            multitrack.setTime(0);
+          } else if (!isPlayingNow && studioPlayIntentRef.current && nearEnd) {
+            multitrack.setTime(0);
+            multitrack.play();
+            setPlayingState(true);
+          }
+
+          if (currentTime < 0.05) {
+            studioLoopArmedRef.current = false;
+          }
+        }
+      }
+      rafId = requestAnimationFrame(tick);
+    };
+    rafId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(rafId);
+  }, [useStudioPlayback]);
 
   useEffect(() => {
     if (!mixUrl || !videoSrc) return;
@@ -318,7 +499,7 @@ export default function WatchPage() {
   }, []);
 
   const scheduleHideChrome = () => {
-    if (isAudioContent) return;
+    if (isAudioOnlyPlayback) return;
     if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
     hideTimerRef.current = setTimeout(() => {
       if (playingRef.current) setShowChrome(false);
@@ -327,39 +508,52 @@ export default function WatchPage() {
 
   const revealChrome = () => {
     setShowChrome(true);
-    if (playingRef.current && !isAudioContent) scheduleHideChrome();
+    if (playingRef.current && !isAudioOnlyPlayback) scheduleHideChrome();
   };
 
   const handlePlay = () => {
-    playingRef.current = true;
-    setIsPlaying(true);
+    setPlayingState(true);
     setShowChrome(true);
-    if (!isAudioContent) scheduleHideChrome();
+    if (!isAudioOnlyPlayback) scheduleHideChrome();
   };
 
   const handlePause = () => {
-    playingRef.current = false;
-    setIsPlaying(false);
+    setPlayingState(false);
     setShowChrome(true);
     if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
   };
 
   const toggleMute = () => {
-    const media = primaryMediaRef.current;
-    if (media) media.muted = !muted;
-    setMuted(!muted);
+    setMuted((prev) => {
+      const next = !prev;
+      if (!useStudioPlayback) {
+        const media = primaryMediaRef.current;
+        if (media) media.muted = next;
+      }
+      return next;
+    });
   };
 
   const toggleLoop = () => {
     setLoopEnabled((prev) => !prev);
+    studioLoopArmedRef.current = false;
   };
 
   const handleSeek = (e) => {
-    const media = primaryMediaRef.current;
     const bar = e.currentTarget;
     const rect = bar.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const percent = x / rect.width;
+    if (useStudioPlayback && studioRef.current) {
+      const duration = studioRef.current.maxDuration || 0;
+      const nextTime = duration * percent;
+      studioRef.current.setTime(nextTime);
+      if (hasStudioVideo && videoRef.current) {
+        videoRef.current.currentTime = nextTime;
+      }
+      return;
+    }
+    const media = primaryMediaRef.current;
     if (media && media.duration) {
       media.currentTime = percent * media.duration;
       if (mixUrl && videoRef.current) {
@@ -369,6 +563,26 @@ export default function WatchPage() {
   };
 
   const togglePlayback = () => {
+    if (useStudioPlayback && studioRef.current) {
+      const multitrack = studioRef.current;
+      if (multitrack.isPlaying()) {
+        studioPlayIntentRef.current = false;
+        multitrack.pause();
+        if (hasStudioVideo && videoRef.current) {
+          videoRef.current.pause();
+        }
+        setPlayingState(false);
+      } else {
+        studioPlayIntentRef.current = true;
+        multitrack.play();
+        if (hasStudioVideo && videoRef.current) {
+          videoRef.current.currentTime = multitrack.getCurrentTime();
+          videoRef.current.play().catch(() => {});
+        }
+        setPlayingState(true);
+      }
+      return;
+    }
     const media = primaryMediaRef.current;
     if (!media) return;
     if (media.paused) {
@@ -540,9 +754,13 @@ export default function WatchPage() {
     pointerEvents: 'auto',
   };
 
+  const studioWaveHeight = useStudioPlayback
+    ? Math.min(360, Math.max(96, studioTracks.length * 56 + 24))
+    : 96;
+
   const audioWaveStyle = {
     width: '100%',
-    height: '96px',
+    height: studioWaveHeight,
     borderRadius: '14px',
     border: '1px solid rgba(127,176,255,0.45)',
     background: 'linear-gradient(135deg, rgba(6,16,32,0.75), rgba(9,27,56,0.6))',
@@ -551,7 +769,7 @@ export default function WatchPage() {
     boxSizing: 'border-box',
     position: 'relative',
     cursor: 'pointer',
-    overflow: 'hidden',
+    overflow: useStudioPlayback ? 'auto' : 'hidden',
   };
 
   const audioWaveCanvasStyle = {
@@ -703,13 +921,13 @@ export default function WatchPage() {
           height: '100vh',
           objectFit: 'contain',
           cursor: 'pointer',
-          opacity: isAudioContent ? 0 : 1,
-          pointerEvents: isAudioContent ? 'none' : 'auto',
+          opacity: isAudioOnlyPlayback ? 0 : 1,
+          pointerEvents: isAudioOnlyPlayback ? 'none' : 'auto',
           transition: 'opacity 0.35s ease',
         }}
       />
 
-      {isAudioContent && (
+      {showWaveform && (
         <div style={audioWaveWrapStyle}>
           <div
             style={audioWaveStyle}
@@ -717,7 +935,7 @@ export default function WatchPage() {
             onPointerEnter={handleWavePointerEnter}
             onPointerLeave={handleWavePointerLeave}
           >
-            <div ref={waveformRef} style={audioWaveCanvasStyle} />
+            <div ref={useStudioPlayback ? studioWaveRef : waveformRef} style={audioWaveCanvasStyle} />
             <div ref={waveHoverRef} style={audioWaveHoverStyle} />
             <div ref={waveTimeRef} style={audioWaveTimeStyle}>0:00</div>
             <div ref={waveDurationRef} style={audioWaveDurationStyle}>0:00</div>
