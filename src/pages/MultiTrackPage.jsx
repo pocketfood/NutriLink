@@ -41,6 +41,8 @@ export default function MultiTrackPage() {
   const [isLoadingSession, setIsLoadingSession] = useState(false);
   const loopEnabledRef = useRef(false);
   const loopArmedRef = useRef(false);
+  const wasPlayingRef = useRef(false);
+  const playIntentRef = useRef(false);
   const sessionIdRef = useRef(null);
 
   const getMediaProxyUrl = (url) => {
@@ -105,6 +107,8 @@ export default function MultiTrackPage() {
     lastTimeRef.current = 0;
     lastPlayingRef.current = false;
     loopArmedRef.current = false;
+    wasPlayingRef.current = false;
+    playIntentRef.current = false;
     sessionIdRef.current = null;
     setTracks([]);
     setTrackMix({});
@@ -225,18 +229,40 @@ export default function MultiTrackPage() {
     let rafId = 0;
     const tick = () => {
       const multitrack = multitrackRef.current;
-      if (multitrack && loopEnabledRef.current && multitrack.isPlaying()) {
+      if (multitrack) {
         const maxDuration = multitrack.maxDuration || 0;
-        if (maxDuration > 0) {
-          const currentTime = multitrack.getCurrentTime();
-          if (!loopArmedRef.current && currentTime >= maxDuration - 0.005) {
+        const currentTime = multitrack.getCurrentTime();
+        const isPlayingNow = multitrack.isPlaying();
+        const wasPlaying = wasPlayingRef.current;
+
+        if (loopEnabledRef.current && maxDuration > 0) {
+          const nearLoopPoint = currentTime >= maxDuration - 0.01;
+          const nearEnd = currentTime >= maxDuration - 0.15;
+
+          if (isPlayingNow && nearLoopPoint && !loopArmedRef.current) {
             loopArmedRef.current = true;
             multitrack.setTime(0);
+          } else if (!isPlayingNow && playIntentRef.current && nearEnd) {
+            multitrack.setTime(0);
+            multitrack.play();
+            setIsPlaying(true);
           }
-          if (loopArmedRef.current && currentTime < 0.25) {
+
+          if (currentTime < 0.05) {
             loopArmedRef.current = false;
           }
         }
+
+        if (wasPlaying && !isPlayingNow && !loopEnabledRef.current) {
+          setIsPlaying(false);
+          playIntentRef.current = false;
+        }
+
+        if (!wasPlaying && isPlayingNow) {
+          setIsPlaying(true);
+        }
+
+        wasPlayingRef.current = isPlayingNow;
       }
       rafId = requestAnimationFrame(tick);
     };
@@ -248,9 +274,11 @@ export default function MultiTrackPage() {
     const multitrack = multitrackRef.current;
     if (!multitrack) return;
     if (multitrack.isPlaying()) {
+      playIntentRef.current = false;
       multitrack.pause();
       setIsPlaying(false);
     } else {
+      playIntentRef.current = true;
       multitrack.play();
       setIsPlaying(true);
     }
