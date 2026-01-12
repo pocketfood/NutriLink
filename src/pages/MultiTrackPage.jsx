@@ -29,6 +29,7 @@ export default function MultiTrackPage() {
   const lastTimeRef = useRef(0);
   const lastPlayingRef = useRef(false);
   const nextIdRef = useRef(0);
+  const trackPositionsRef = useRef({});
 
   const [tracks, setTracks] = useState([]);
   const [trackMix, setTrackMix] = useState({});
@@ -83,12 +84,16 @@ export default function MultiTrackPage() {
 
   const buildTrack = (url, index, overrides = {}) => {
     const palette = TRACK_COLORS[index % TRACK_COLORS.length];
+    const trackId = nextIdRef.current++;
+    const startPosition = typeof overrides.startPosition === 'number' ? overrides.startPosition : 0;
+    trackPositionsRef.current[trackId] = startPosition;
     return {
-      id: nextIdRef.current++,
+      id: trackId,
       sourceUrl: url,
       url: getMediaProxyUrl(url),
-      startPosition: typeof overrides.startPosition === 'number' ? overrides.startPosition : 0,
+      startPosition,
       volume: typeof overrides.volume === 'number' ? overrides.volume : 1,
+      draggable: true,
       options: {
         waveColor: palette.wave,
         progressColor: palette.progress,
@@ -140,6 +145,7 @@ export default function MultiTrackPage() {
     wasPlayingRef.current = false;
     playIntentRef.current = false;
     sessionIdRef.current = null;
+    trackPositionsRef.current = {};
     setTracks([]);
     setTrackMix({});
     setIsReady(false);
@@ -169,10 +175,18 @@ export default function MultiTrackPage() {
       return;
     }
 
-    const multitrack = Multitrack.create(tracks, {
+    const arrangedTracks = tracks.map((track) => {
+      const startPosition = trackPositionsRef.current[track.id];
+      return {
+        ...track,
+        startPosition: typeof startPosition === 'number' ? startPosition : track.startPosition ?? 0,
+      };
+    });
+
+    const multitrack = Multitrack.create(arrangedTracks, {
       container: containerRef.current,
       minPxPerSec: zoom,
-      rightButtonDrag: true,
+      rightButtonDrag: false,
       cursorWidth: 2,
       cursorColor: '#7fb0ff',
       trackBackground: '#0b1324',
@@ -189,6 +203,9 @@ export default function MultiTrackPage() {
         if (!mix) return;
         multitrack.setTrackVolume(index, mix.muted ? 0 : mix.volume ?? 1);
       });
+    });
+    const unsubscribeStartPosition = multitrack.on('start-position-change', ({ id, startPosition }) => {
+      trackPositionsRef.current[id] = startPosition;
     });
 
     if (lastTimeRef.current) multitrack.setTime(lastTimeRef.current);
@@ -207,6 +224,7 @@ export default function MultiTrackPage() {
 
     return () => {
       unsubscribeCanPlay();
+      unsubscribeStartPosition();
       multitrack.destroy();
       multitrackRef.current = null;
     };
@@ -303,6 +321,7 @@ export default function MultiTrackPage() {
         const loadedDescription = typeof data.description === 'string' ? data.description : '';
         const loadedVideoUrl = typeof data.videoUrl === 'string' ? data.videoUrl : '';
         nextIdRef.current = 0;
+        trackPositionsRef.current = {};
         const nextTracks = savedTracks.map((track, index) =>
           buildTrack(track.url, index, track)
         );
@@ -446,9 +465,10 @@ export default function MultiTrackPage() {
       const sessionVideoUrl = videoUrl.trim();
       const savedTracks = tracks.map((track, index) => {
         const mix = trackMix[index] || {};
+        const startPosition = trackPositionsRef.current[track.id];
         return {
           url: track.sourceUrl || track.url,
-          startPosition: typeof track.startPosition === 'number' ? track.startPosition : 0,
+          startPosition: typeof startPosition === 'number' ? startPosition : track.startPosition ?? 0,
           volume: typeof mix.volume === 'number'
             ? mix.volume
             : typeof track.volume === 'number'
