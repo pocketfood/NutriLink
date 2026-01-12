@@ -37,6 +37,7 @@ export default function WatchPage() {
   const [loopEnabled, setLoopEnabled] = useState(false);
   const [studioDrawerOpen, setStudioDrawerOpen] = useState(false);
   const [needsUserStart, setNeedsUserStart] = useState(false);
+  const [isCompactLayout, setIsCompactLayout] = useState(false);
   const videoRef = useRef(null);
   const audioRef = useRef(null);
   const progressRef = useRef(null);
@@ -183,6 +184,16 @@ export default function WatchPage() {
 
     fetchVideo();
   }, [id]);
+
+  useEffect(() => {
+    const updateLayout = () => {
+      if (typeof window === 'undefined') return;
+      setIsCompactLayout(window.innerWidth <= 720);
+    };
+    updateLayout();
+    window.addEventListener('resize', updateLayout);
+    return () => window.removeEventListener('resize', updateLayout);
+  }, []);
 
   useEffect(() => {
     loopEnabledRef.current = loopEnabled;
@@ -682,13 +693,15 @@ export default function WatchPage() {
 
   const controlsBarStyle = {
     position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
-    width: '100%',
-    padding: '0.75rem 1rem calc(0.9rem + env(safe-area-inset-bottom))',
-    background: 'linear-gradient(to top, rgba(0,0,0,0.75), rgba(0,0,0,0))',
-    borderRadius: '16px 16px 0 0',
+    left: isCompactLayout ? 'auto' : 0,
+    right: isCompactLayout ? '0.75rem' : 0,
+    bottom: isCompactLayout ? '1rem' : 0,
+    width: isCompactLayout ? 'min(78vw, 280px)' : '100%',
+    padding: isCompactLayout ? '0.65rem 0.75rem' : '0.75rem 1rem calc(0.9rem + env(safe-area-inset-bottom))',
+    background: isCompactLayout
+      ? 'rgba(0,0,0,0.75)'
+      : 'linear-gradient(to top, rgba(0,0,0,0.75), rgba(0,0,0,0))',
+    borderRadius: isCompactLayout ? '16px' : '16px 16px 0 0',
     boxSizing: 'border-box',
     opacity: showChrome ? 1 : 0,
     pointerEvents: showChrome ? 'auto' : 'none',
@@ -987,6 +1000,18 @@ export default function WatchPage() {
     minHeight: '200px',
   };
 
+  const titleBlockStyle = {
+    position: 'absolute',
+    bottom: 'calc(6rem + env(safe-area-inset-bottom))',
+    left: '1rem',
+    color: 'white',
+    zIndex: 10,
+    width: isCompactLayout ? 'min(60vw, 240px)' : 'calc(100% - 5rem)',
+    opacity: showChrome ? 1 : 0,
+    pointerEvents: showChrome ? 'auto' : 'none',
+    transition: 'opacity 0.35s ease',
+  };
+
 
   if (error) {
     return (
@@ -1251,19 +1276,7 @@ export default function WatchPage() {
         </div>
       </div>
 
-      <div
-        style={{
-          position: 'absolute',
-          bottom: 'calc(6rem + env(safe-area-inset-bottom))',
-          left: '1rem',
-          color: 'white',
-          zIndex: 10,
-          width: 'calc(100% - 5rem)',
-          opacity: showChrome ? 1 : 0,
-          pointerEvents: showChrome ? 'auto' : 'none',
-          transition: 'opacity 0.35s ease',
-        }}
-      >
+      <div style={titleBlockStyle}>
         {videoData.filename && <h3 style={{ margin: 0, fontSize: '1.25rem' }}>{videoData.filename}</h3>}
         {videoData.description && (
           <p style={{ margin: '0.5rem 0 0', fontSize: '0.9rem', color: '#ccc' }}>{videoData.description}</p>
