@@ -371,13 +371,19 @@ export default function MultiTrackPage() {
         const hasPreview = Boolean(videoUrl.trim());
 
         if (loopEnabledRef.current && maxDuration > 0) {
-          const nearLoopPoint = currentTime >= maxDuration - 0.01;
+          const loopLead = 0.06;
+          const nearLoopPoint = currentTime >= maxDuration - loopLead;
           const nearEnd = currentTime >= maxDuration - 0.15;
 
           if (isPlayingNow && nearLoopPoint && !loopArmedRef.current) {
             loopArmedRef.current = true;
             multitrack.setTime(0);
-            if (video && hasPreview) video.currentTime = 0;
+            multitrack.play();
+            if (video && hasPreview) {
+              video.currentTime = 0;
+              video.play().catch(() => {});
+            }
+            setIsPlaying(true);
           } else if (!isPlayingNow && playIntentRef.current && nearEnd) {
             multitrack.setTime(0);
             if (video && hasPreview) {
