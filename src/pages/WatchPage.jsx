@@ -693,15 +693,15 @@ export default function WatchPage() {
 
   const controlsBarStyle = {
     position: 'absolute',
-    left: isCompactLayout ? 'auto' : 0,
-    right: isCompactLayout ? '0.75rem' : 0,
-    bottom: isCompactLayout ? '1rem' : 0,
-    width: isCompactLayout ? 'min(78vw, 280px)' : '100%',
-    padding: isCompactLayout ? '0.65rem 0.75rem' : '0.75rem 1rem calc(0.9rem + env(safe-area-inset-bottom))',
-    background: isCompactLayout
-      ? 'rgba(0,0,0,0.75)'
-      : 'linear-gradient(to top, rgba(0,0,0,0.75), rgba(0,0,0,0))',
-    borderRadius: isCompactLayout ? '16px' : '16px 16px 0 0',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    width: '100%',
+    padding: isCompactLayout
+      ? '0.6rem 0.85rem calc(0.8rem + env(safe-area-inset-bottom))'
+      : '0.75rem 1rem calc(0.9rem + env(safe-area-inset-bottom))',
+    background: 'linear-gradient(to top, rgba(0,0,0,0.75), rgba(0,0,0,0))',
+    borderRadius: '16px 16px 0 0',
     boxSizing: 'border-box',
     opacity: showChrome ? 1 : 0,
     pointerEvents: showChrome ? 'auto' : 'none',
@@ -709,16 +709,16 @@ export default function WatchPage() {
     zIndex: 12,
     display: 'flex',
     flexDirection: 'column',
-    gap: '0.5rem',
+    gap: isCompactLayout ? '0.4rem' : '0.5rem',
   };
 
   const controlsRowStyle = {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',
-    gap: '0.75rem',
-    flexWrap: 'wrap',
-    rowGap: '0.5rem',
+    gap: isCompactLayout ? '0.5rem' : '0.75rem',
+    flexWrap: isCompactLayout ? 'nowrap' : 'wrap',
+    rowGap: isCompactLayout ? '0.4rem' : '0.5rem',
   };
 
   const autoplayNoticeStyle = {
@@ -734,12 +734,12 @@ export default function WatchPage() {
   const controlsGroupStyle = {
     display: 'flex',
     alignItems: 'center',
-    gap: '0.5rem',
+    gap: isCompactLayout ? '0.35rem' : '0.5rem',
   };
 
   const iconButtonStyle = {
-    width: '34px',
-    height: '34px',
+    width: isCompactLayout ? '30px' : '34px',
+    height: isCompactLayout ? '30px' : '34px',
     borderRadius: '999px',
     backgroundColor: 'rgba(0,0,0,0.55)',
     border: '1px solid rgba(255,255,255,0.12)',
@@ -756,7 +756,7 @@ export default function WatchPage() {
   };
 
   const volumeSliderStyle = {
-    width: 'clamp(72px, 30vw, 120px)',
+    width: isCompactLayout ? 'clamp(60px, 22vw, 92px)' : 'clamp(72px, 30vw, 120px)',
     accentColor: '#ffffff',
   };
 
@@ -1002,11 +1002,13 @@ export default function WatchPage() {
 
   const titleBlockStyle = {
     position: 'absolute',
-    bottom: 'calc(6rem + env(safe-area-inset-bottom))',
+    bottom: isCompactLayout
+      ? 'calc(8.5rem + env(safe-area-inset-bottom))'
+      : 'calc(6rem + env(safe-area-inset-bottom))',
     left: '1rem',
     color: 'white',
     zIndex: 10,
-    width: isCompactLayout ? 'min(60vw, 240px)' : 'calc(100% - 5rem)',
+    width: 'calc(100% - 5rem)',
     opacity: showChrome ? 1 : 0,
     pointerEvents: showChrome ? 'auto' : 'none',
     transition: 'opacity 0.35s ease',
