@@ -36,6 +36,7 @@ export default function WatchPage() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [loopEnabled, setLoopEnabled] = useState(false);
   const [studioDrawerOpen, setStudioDrawerOpen] = useState(false);
+  const [needsUserStart, setNeedsUserStart] = useState(false);
   const videoRef = useRef(null);
   const audioRef = useRef(null);
   const progressRef = useRef(null);
@@ -55,6 +56,7 @@ export default function WatchPage() {
   const seekDurationRef = useRef(null);
   const hideTimerRef = useRef(null);
   const playingRef = useRef(false);
+  const userGestureRef = useRef(false);
 
   const isAudioUrl = (value) => {
     if (!value) return false;
@@ -118,6 +120,19 @@ export default function WatchPage() {
   const setPlayingState = (playing) => {
     playingRef.current = playing;
     setIsPlaying(playing);
+  };
+
+  const registerUserGesture = () => {
+    userGestureRef.current = true;
+    setNeedsUserStart(false);
+  };
+
+  const canAutoplay = () => {
+    if (userGestureRef.current) return true;
+    if (typeof navigator !== 'undefined' && navigator.userActivation) {
+      return navigator.userActivation.hasBeenActive;
+    }
+    return false;
   };
 
   const applyStudioVolumes = () => {
@@ -279,8 +294,20 @@ export default function WatchPage() {
     studioRef.current = multitrack;
     const unsubscribeCanPlay = multitrack.on('canplay', () => {
       applyStudioVolumes();
+      if (!canAutoplay()) {
+        studioPlayIntentRef.current = false;
+        setNeedsUserStart(true);
+        return;
+      }
       studioPlayIntentRef.current = true;
+      setNeedsUserStart(false);
       multitrack.play();
+      setTimeout(() => {
+        if (!multitrack.isPlaying() && !userGestureRef.current) {
+          studioPlayIntentRef.current = false;
+          setNeedsUserStart(true);
+        }
+      }, 200);
     });
 
     return () => {
@@ -313,7 +340,11 @@ export default function WatchPage() {
             video.currentTime = currentTime;
           }
           if (isPlayingNow && video.paused) {
-            video.play().catch(() => {});
+            if (canAutoplay()) {
+              video.play().catch(() => {});
+            } else {
+              setNeedsUserStart(true);
+            }
           }
           if (!isPlayingNow && !video.paused) {
             video.pause();
@@ -446,6 +477,12 @@ export default function WatchPage() {
   }, [isAudioOnlyPlayback]);
 
   useEffect(() => {
+    if (needsUserStart) {
+      setShowChrome(true);
+    }
+  }, [needsUserStart]);
+
+  useEffect(() => {
     let rafId = 0;
     const tick = () => {
       if (useStudioPlayback && studioRef.current) {
@@ -541,12 +578,15 @@ export default function WatchPage() {
   };
 
   const handlePlay = () => {
+    if (useStudioPlayback) return;
     setPlayingState(true);
+    setNeedsUserStart(false);
     setShowChrome(true);
     if (!isAudioOnlyPlayback) scheduleHideChrome();
   };
 
   const handlePause = () => {
+    if (useStudioPlayback) return;
     setPlayingState(false);
     setShowChrome(true);
     if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
@@ -592,6 +632,7 @@ export default function WatchPage() {
   };
 
   const togglePlayback = () => {
+    registerUserGesture();
     if (useStudioPlayback && studioRef.current) {
       const multitrack = studioRef.current;
       if (multitrack.isPlaying()) {
@@ -665,6 +706,16 @@ export default function WatchPage() {
     gap: '0.75rem',
     flexWrap: 'wrap',
     rowGap: '0.5rem',
+  };
+
+  const autoplayNoticeStyle = {
+    alignSelf: 'flex-start',
+    fontSize: '0.75rem',
+    color: '#cfe2ff',
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    border: '1px solid rgba(127,176,255,0.3)',
+    borderRadius: '999px',
+    padding: '0.25rem 0.6rem',
   };
 
   const controlsGroupStyle = {
@@ -1014,7 +1065,7 @@ export default function WatchPage() {
       )}
       <video
         ref={videoRef}
-        autoPlay
+        autoPlay={!useStudioPlayback}
         controls={false}
         playsInline
         preload="auto"
@@ -1178,6 +1229,9 @@ export default function WatchPage() {
             </div>
           </div>
         </div>
+        {needsUserStart && useStudioPlayback && (
+          <div style={autoplayNoticeStyle}>Tap Play to start audio (browser policy).</div>
+        )}
         <div style={seekRowStyle}>
           <button
             type="button"
