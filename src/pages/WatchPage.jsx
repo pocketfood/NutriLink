@@ -1,7 +1,18 @@
 import { useEffect, useRef, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import QRCode from 'react-qr-code';
-import { FaDownload, FaQrcode, FaVolumeMute, FaVolumeUp, FaInfoCircle, FaPlay, FaPause, FaRedo } from 'react-icons/fa';
+import {
+  FaDownload,
+  FaQrcode,
+  FaVolumeMute,
+  FaVolumeUp,
+  FaInfoCircle,
+  FaPlay,
+  FaPause,
+  FaRedo,
+  FaChevronUp,
+  FaChevronDown,
+} from 'react-icons/fa';
 import WaveSurfer from 'wavesurfer.js';
 import Multitrack from 'wavesurfer-multitrack';
 import Hls from 'hls.js';
@@ -24,6 +35,7 @@ export default function WatchPage() {
   const [waveError, setWaveError] = useState(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [loopEnabled, setLoopEnabled] = useState(false);
+  const [studioDrawerOpen, setStudioDrawerOpen] = useState(false);
   const videoRef = useRef(null);
   const audioRef = useRef(null);
   const progressRef = useRef(null);
@@ -132,7 +144,8 @@ export default function WatchPage() {
   const isAudioContent =
     !useStudioPlayback && videoData && !hasStudioVideo && (videoData.type === 'audio' || isAudioUrl(videoData.url));
   const isAudioOnlyPlayback = isAudioContent || (useStudioPlayback && !hasStudioVideo);
-  const showWaveform = isAudioContent || useStudioPlayback;
+  const showAudioWaveform = isAudioContent;
+  const showStudioDrawer = useStudioPlayback;
   const mediaSrc = videoData?.url ? getMediaProxyUrl(videoData.url) : null;
   const audioSrc = mixUrl ? getMediaProxyUrl(mixUrl) : isAudioContent ? mediaSrc : null;
   const videoSrc = hasStudioVideo ? getMediaProxyUrl(videoData.videoUrl) : mixUrl ? null : mediaSrc;
@@ -159,6 +172,10 @@ export default function WatchPage() {
   useEffect(() => {
     loopEnabledRef.current = loopEnabled;
   }, [loopEnabled]);
+
+  useEffect(() => {
+    if (!useStudioPlayback) setStudioDrawerOpen(false);
+  }, [useStudioPlayback]);
 
   useEffect(() => {
     if (!videoData) return;
@@ -438,15 +455,27 @@ export default function WatchPage() {
         const isPlayingNow = multitrack.isPlaying();
 
         if (loopEnabledRef.current && maxDuration > 0) {
-          const nearLoopPoint = currentTime >= maxDuration - 0.01;
-          const nearEnd = currentTime >= maxDuration - 0.2;
+          const loopLead = 0.06;
+          const nearLoopPoint = currentTime >= maxDuration - loopLead;
+          const nearEnd = currentTime >= maxDuration - 0.15;
+          const video = hasStudioVideo ? videoRef.current : null;
 
           if (isPlayingNow && nearLoopPoint && !studioLoopArmedRef.current) {
             studioLoopArmedRef.current = true;
             multitrack.setTime(0);
+            multitrack.play();
+            if (video) {
+              video.currentTime = 0;
+              video.play().catch(() => {});
+            }
+            setPlayingState(true);
           } else if (!isPlayingNow && studioPlayIntentRef.current && nearEnd) {
             multitrack.setTime(0);
             multitrack.play();
+            if (video) {
+              video.currentTime = 0;
+              video.play().catch(() => {});
+            }
             setPlayingState(true);
           }
 
@@ -831,6 +860,101 @@ export default function WatchPage() {
     zIndex: 4,
   };
 
+  const studioDrawerOffset = 'calc(4.75rem + env(safe-area-inset-bottom))';
+
+  const studioDrawerStyle = {
+    position: 'absolute',
+    left: '1rem',
+    right: '1rem',
+    bottom: studioDrawerOffset,
+    backgroundColor: 'rgba(6,16,32,0.92)',
+    border: '1px solid rgba(127,176,255,0.35)',
+    borderRadius: '16px',
+    boxShadow: '0 16px 40px rgba(0,0,0,0.45)',
+    transform: studioDrawerOpen ? 'translateY(0)' : 'translateY(calc(100% + 1rem))',
+    opacity: studioDrawerOpen ? 1 : 0,
+    pointerEvents: studioDrawerOpen ? 'auto' : 'none',
+    transition: 'transform 0.35s ease, opacity 0.2s ease',
+    zIndex: 20,
+    display: 'flex',
+    flexDirection: 'column',
+    maxHeight: '45vh',
+  };
+
+  const studioDrawerHeaderStyle = {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '0.75rem',
+    padding: '0.75rem 0.85rem 0.4rem',
+    borderBottom: '1px solid rgba(127,176,255,0.2)',
+  };
+
+  const studioDrawerTitleStyle = {
+    fontWeight: 700,
+    fontSize: '0.95rem',
+    color: '#e9f1ff',
+  };
+
+  const studioDrawerSubtitleStyle = {
+    fontSize: '0.75rem',
+    color: '#9bbcff',
+  };
+
+  const studioDrawerTimeStyle = {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.35rem',
+    fontSize: '0.8rem',
+    color: '#cfe2ff',
+    fontVariantNumeric: 'tabular-nums',
+  };
+
+  const studioDrawerTimeDividerStyle = {
+    opacity: 0.6,
+  };
+
+  const studioDrawerCloseButtonStyle = {
+    width: '30px',
+    height: '30px',
+    borderRadius: '999px',
+    border: '1px solid rgba(127,176,255,0.35)',
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    color: '#fff',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    cursor: 'pointer',
+  };
+
+  const studioDrawerWaveStyle = {
+    margin: '0.6rem 0.85rem 0.85rem',
+    borderRadius: '12px',
+    overflow: 'hidden',
+    backgroundColor: '#0b1324',
+    flex: 1,
+    minHeight: '200px',
+  };
+
+  const studioToggleButtonStyle = {
+    position: 'absolute',
+    right: '1rem',
+    bottom: studioDrawerOffset,
+    zIndex: 21,
+    borderRadius: '999px',
+    border: '1px solid rgba(127,176,255,0.45)',
+    backgroundColor: 'rgba(0,0,0,0.65)',
+    color: '#e9f1ff',
+    padding: '0.45rem 0.75rem',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.35rem',
+    cursor: 'pointer',
+    opacity: showChrome ? 1 : 0,
+    pointerEvents: showChrome ? 'auto' : 'none',
+    transition: 'opacity 0.35s ease',
+  };
+
   if (error) {
     return (
       <div
@@ -927,7 +1051,7 @@ export default function WatchPage() {
         }}
       />
 
-      {showWaveform && (
+      {showAudioWaveform && (
         <div style={audioWaveWrapStyle}>
           <div
             style={audioWaveStyle}
@@ -935,13 +1059,50 @@ export default function WatchPage() {
             onPointerEnter={handleWavePointerEnter}
             onPointerLeave={handleWavePointerLeave}
           >
-            <div ref={useStudioPlayback ? studioWaveRef : waveformRef} style={audioWaveCanvasStyle} />
+            <div ref={waveformRef} style={audioWaveCanvasStyle} />
             <div ref={waveHoverRef} style={audioWaveHoverStyle} />
             <div ref={waveTimeRef} style={audioWaveTimeStyle}>0:00</div>
             <div ref={waveDurationRef} style={audioWaveDurationStyle}>0:00</div>
             {waveError && <div style={audioWaveMessageStyle}>{waveError}</div>}
           </div>
         </div>
+      )}
+
+      {showStudioDrawer && (
+        <>
+          {!studioDrawerOpen && (
+            <button
+              type="button"
+              onClick={() => setStudioDrawerOpen(true)}
+              style={studioToggleButtonStyle}
+              aria-label="Show mix timeline"
+            >
+              Tracks <FaChevronUp size={12} />
+            </button>
+          )}
+          <div style={studioDrawerStyle}>
+            <div style={studioDrawerHeaderStyle}>
+              <div>
+                <div style={studioDrawerTitleStyle}>Mix timeline</div>
+                <div style={studioDrawerSubtitleStyle}>{studioTracks.length} tracks</div>
+              </div>
+              <div style={studioDrawerTimeStyle}>
+                <span ref={waveTimeRef}>0:00</span>
+                <span style={studioDrawerTimeDividerStyle}>/</span>
+                <span ref={waveDurationRef}>0:00</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setStudioDrawerOpen(false)}
+                style={studioDrawerCloseButtonStyle}
+                aria-label="Hide mix timeline"
+              >
+                <FaChevronDown size={14} />
+              </button>
+            </div>
+            <div ref={studioWaveRef} style={studioDrawerWaveStyle} />
+          </div>
+        </>
       )}
 
       <Link
