@@ -9,12 +9,31 @@ const ALLOWED_ORIGIN =
     ? process.env.APP_ORIGIN || 'https://app.example'
     : '*';
 
-const ALLOWED_HOSTS = new Set(
-  (process.env.AUDIO_PROXY_ALLOWED_HOSTS || '')
-    .split(',')
-    .map((host) => host.trim())
-    .filter(Boolean)
-);
+const allowedHostEntries = (process.env.AUDIO_PROXY_ALLOWED_HOSTS || '')
+  .split(',')
+  .map((host) => host.trim())
+  .filter(Boolean)
+  .map((host) => {
+    if (/^https?:\/\//i.test(host)) {
+      try {
+        return new URL(host).host;
+      } catch {
+        return host;
+      }
+    }
+    return host;
+  });
+
+const ALLOWED_WILDCARD_SUFFIXES = [];
+const ALLOWED_HOSTS = new Set();
+
+allowedHostEntries.forEach((host) => {
+  if (host.startsWith('*.') && host.length > 2) {
+    ALLOWED_WILDCARD_SUFFIXES.push(host.slice(1).toLowerCase());
+  } else {
+    ALLOWED_HOSTS.add(host.toLowerCase());
+  }
+});
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': ALLOWED_ORIGIN,
@@ -36,8 +55,13 @@ function getTargetUrl(req) {
 }
 
 function isAllowedHost(targetUrl) {
-  if (!ALLOWED_HOSTS.size) return process.env.NODE_ENV !== 'production';
-  return ALLOWED_HOSTS.has(targetUrl.host) || ALLOWED_HOSTS.has(targetUrl.hostname);
+  if (!ALLOWED_HOSTS.size && !ALLOWED_WILDCARD_SUFFIXES.length) {
+    return process.env.NODE_ENV !== 'production';
+  }
+  const host = targetUrl.host.toLowerCase();
+  const hostname = targetUrl.hostname.toLowerCase();
+  if (ALLOWED_HOSTS.has(host) || ALLOWED_HOSTS.has(hostname)) return true;
+  return ALLOWED_WILDCARD_SUFFIXES.some((suffix) => hostname.endsWith(suffix));
 }
 
 export default async function handler(req, res) {
