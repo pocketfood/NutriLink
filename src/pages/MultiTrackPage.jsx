@@ -11,6 +11,7 @@ import {
   FaVolumeUp,
 } from 'react-icons/fa';
 import Multitrack from 'wavesurfer-multitrack';
+import Hls from 'hls.js';
 
 const TRACK_COLORS = [
   { wave: 'rgba(127,176,255,0.7)', progress: '#4da2ff' },
@@ -23,6 +24,8 @@ export default function MultiTrackPage() {
   const navigate = useNavigate();
   const containerRef = useRef(null);
   const multitrackRef = useRef(null);
+  const videoRef = useRef(null);
+  const videoHlsRef = useRef(null);
   const lastTimeRef = useRef(0);
   const lastPlayingRef = useRef(false);
   const nextIdRef = useRef(0);
@@ -39,6 +42,9 @@ export default function MultiTrackPage() {
   const [author, setAuthor] = useState('Anonymous');
   const [description, setDescription] = useState('');
   const [videoUrl, setVideoUrl] = useState('');
+  const [videoMuted, setVideoMuted] = useState(true);
+  const [videoVolume, setVideoVolume] = useState(1);
+  const [videoError, setVideoError] = useState(null);
   const [shareUrl, setShareUrl] = useState('');
   const [saveError, setSaveError] = useState(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -119,6 +125,15 @@ export default function MultiTrackPage() {
       multitrackRef.current.destroy();
       multitrackRef.current = null;
     }
+    if (videoHlsRef.current) {
+      videoHlsRef.current.destroy();
+      videoHlsRef.current = null;
+    }
+    if (videoRef.current) {
+      videoRef.current.pause();
+      videoRef.current.removeAttribute('src');
+      videoRef.current.load();
+    }
     lastTimeRef.current = 0;
     lastPlayingRef.current = false;
     loopArmedRef.current = false;
@@ -133,6 +148,9 @@ export default function MultiTrackPage() {
     setAuthor('Anonymous');
     setDescription('');
     setVideoUrl('');
+    setVideoMuted(true);
+    setVideoVolume(1);
+    setVideoError(null);
     setShareUrl('');
   };
 
@@ -178,6 +196,11 @@ export default function MultiTrackPage() {
     if (lastPlayingRef.current) {
       multitrack.play();
       setIsPlaying(true);
+      const video = videoRef.current;
+      if (video && videoUrl.trim()) {
+        video.currentTime = multitrack.getCurrentTime();
+        video.play().catch(() => {});
+      }
     } else {
       setIsPlaying(false);
     }
@@ -194,6 +217,64 @@ export default function MultiTrackPage() {
       multitrackRef.current.zoom(zoom);
     }
   }, [zoom]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    if (videoHlsRef.current) {
+      videoHlsRef.current.destroy();
+      videoHlsRef.current = null;
+    }
+
+    const src = videoUrl.trim();
+    if (!src) {
+      video.removeAttribute('src');
+      video.load();
+      setVideoError(null);
+      return;
+    }
+
+    const proxied = getMediaProxyUrl(src);
+    setVideoError(null);
+
+    if (proxied.endsWith('.m3u8')) {
+      if (Hls.isSupported()) {
+        const hls = new Hls({
+          xhrSetup: (xhr, url) => {
+            xhr.open('GET', getMediaProxyUrl(url), true);
+          },
+          fetchSetup: (context, init) => new Request(getMediaProxyUrl(context.url), init),
+        });
+        hls.loadSource(proxied);
+        hls.attachMedia(video);
+        hls.on(Hls.Events.ERROR, (event, data) => {
+          if (data.fatal) setVideoError('Video preview failed to load.');
+        });
+        videoHlsRef.current = hls;
+      } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+        video.src = proxied;
+      } else {
+        setVideoError('HLS preview is not supported in this browser.');
+      }
+    } else {
+      video.src = proxied;
+    }
+
+    return () => {
+      if (videoHlsRef.current) {
+        videoHlsRef.current.destroy();
+        videoHlsRef.current = null;
+      }
+    };
+  }, [videoUrl]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    video.muted = videoMuted;
+    video.volume = videoVolume;
+  }, [videoMuted, videoVolume]);
 
   useEffect(() => {
     const loadSession = async () => {
@@ -267,6 +348,8 @@ export default function MultiTrackPage() {
         const currentTime = multitrack.getCurrentTime();
         const isPlayingNow = multitrack.isPlaying();
         const wasPlaying = wasPlayingRef.current;
+        const video = videoRef.current;
+        const hasPreview = Boolean(videoUrl.trim());
 
         if (loopEnabledRef.current && maxDuration > 0) {
           const nearLoopPoint = currentTime >= maxDuration - 0.01;
@@ -275,14 +358,31 @@ export default function MultiTrackPage() {
           if (isPlayingNow && nearLoopPoint && !loopArmedRef.current) {
             loopArmedRef.current = true;
             multitrack.setTime(0);
+            if (video && hasPreview) video.currentTime = 0;
           } else if (!isPlayingNow && playIntentRef.current && nearEnd) {
             multitrack.setTime(0);
+            if (video && hasPreview) {
+              video.currentTime = 0;
+              video.play().catch(() => {});
+            }
             multitrack.play();
             setIsPlaying(true);
           }
 
           if (currentTime < 0.05) {
             loopArmedRef.current = false;
+          }
+        }
+
+        if (hasPreview && video) {
+          if (Math.abs(video.currentTime - currentTime) > 0.2) {
+            video.currentTime = currentTime;
+          }
+          if (isPlayingNow && video.paused) {
+            video.play().catch(() => {});
+          }
+          if (!isPlayingNow && !video.paused) {
+            video.pause();
           }
         }
 
@@ -301,18 +401,27 @@ export default function MultiTrackPage() {
     };
     rafId = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(rafId);
-  }, []);
+  }, [videoUrl]);
 
   const togglePlay = () => {
     const multitrack = multitrackRef.current;
     if (!multitrack) return;
+    const video = videoRef.current;
+    const hasPreview = Boolean(videoUrl.trim());
     if (multitrack.isPlaying()) {
       playIntentRef.current = false;
       multitrack.pause();
+      if (video && hasPreview) {
+        video.pause();
+      }
       setIsPlaying(false);
     } else {
       playIntentRef.current = true;
       multitrack.play();
+      if (video && hasPreview) {
+        video.currentTime = multitrack.getCurrentTime();
+        video.play().catch(() => {});
+      }
       setIsPlaying(true);
     }
   };
@@ -399,6 +508,10 @@ export default function MultiTrackPage() {
     if (!multitrack) return;
     const nextTime = Math.max(0, multitrack.getCurrentTime() + seconds);
     multitrack.setTime(nextTime);
+    const video = videoRef.current;
+    if (video && videoUrl.trim()) {
+      video.currentTime = nextTime;
+    }
   };
 
   const toggleTrackMute = (index) => {
@@ -483,9 +596,37 @@ export default function MultiTrackPage() {
     padding: '0.6rem 0.75rem',
   };
 
+  const videoPreviewWrapStyle = {
+    marginTop: '1rem',
+    borderRadius: '12px',
+    overflow: 'hidden',
+    border: '1px solid rgba(127,176,255,0.25)',
+    backgroundColor: 'rgba(0,0,0,0.45)',
+  };
+
+  const videoPreviewStyle = {
+    width: '100%',
+    maxHeight: '320px',
+    objectFit: 'contain',
+    backgroundColor: 'black',
+    display: 'block',
+  };
+
+  const videoErrorStyle = {
+    padding: '0.6rem 0.8rem',
+    color: '#ffb4b4',
+    fontSize: '0.85rem',
+  };
+
+  const videoVolumeSliderStyle = {
+    width: '110px',
+    accentColor: '#7fb0ff',
+  };
+
   const displayTitle = title.trim() || 'Untitled Session';
   const displayAuthor = author.trim() || 'Anonymous';
   const displayDescription = description.trim();
+  const hasVideoPreview = Boolean(videoUrl.trim());
 
   return (
     <div style={pageStyle}>
@@ -594,6 +735,20 @@ export default function MultiTrackPage() {
       </div>
 
       <div style={{ ...cardStyle, marginBottom: '1.5rem' }}>
+        {hasVideoPreview && (
+          <div style={videoPreviewWrapStyle}>
+            <video
+              ref={videoRef}
+              playsInline
+              preload="auto"
+              crossOrigin="anonymous"
+              muted={videoMuted}
+              onClick={togglePlay}
+              style={videoPreviewStyle}
+            />
+            {videoError && <div style={videoErrorStyle}>{videoError}</div>}
+          </div>
+        )}
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem', alignItems: 'center' }}>
           <button
             type="button"
@@ -617,6 +772,32 @@ export default function MultiTrackPage() {
           >
             <FaRedo size={14} color="#fff" />
           </button>
+          {hasVideoPreview && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+              <button
+                type="button"
+                onClick={() => setVideoMuted((prev) => !prev)}
+                style={controlButtonStyle}
+                title={videoMuted ? 'Unmute Video' : 'Mute Video'}
+              >
+                {videoMuted ? <FaVolumeMute size={14} color="#fff" /> : <FaVolumeUp size={14} color="#fff" />}
+              </button>
+              <input
+                type="range"
+                min="0"
+                max="1"
+                step="0.01"
+                value={videoMuted ? 0 : videoVolume}
+                onChange={(e) => {
+                  const nextVolume = Number(e.target.value);
+                  setVideoVolume(nextVolume);
+                  if (videoMuted) setVideoMuted(false);
+                }}
+                style={videoVolumeSliderStyle}
+                aria-label="Video volume"
+              />
+            </div>
+          )}
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
             <span style={{ fontSize: '0.85rem', color: '#cfe2ff' }}>Zoom</span>
             <input
