@@ -936,24 +936,6 @@ export default function WatchPage() {
     minHeight: '200px',
   };
 
-  const studioToggleButtonStyle = {
-    position: 'absolute',
-    right: '1rem',
-    bottom: studioDrawerOffset,
-    zIndex: 21,
-    borderRadius: '999px',
-    border: '1px solid rgba(127,176,255,0.45)',
-    backgroundColor: 'rgba(0,0,0,0.65)',
-    color: '#e9f1ff',
-    padding: '0.45rem 0.75rem',
-    display: 'flex',
-    alignItems: 'center',
-    gap: '0.35rem',
-    cursor: 'pointer',
-    opacity: showChrome ? 1 : 0,
-    pointerEvents: showChrome ? 'auto' : 'none',
-    transition: 'opacity 0.35s ease',
-  };
 
   if (error) {
     return (
@@ -1070,16 +1052,6 @@ export default function WatchPage() {
 
       {showStudioDrawer && (
         <>
-          {!studioDrawerOpen && (
-            <button
-              type="button"
-              onClick={() => setStudioDrawerOpen(true)}
-              style={studioToggleButtonStyle}
-              aria-label="Show mix timeline"
-            >
-              Tracks <FaChevronUp size={12} />
-            </button>
-          )}
           <div style={studioDrawerStyle}>
             <div style={studioDrawerHeaderStyle}>
               <div>
@@ -1178,6 +1150,16 @@ export default function WatchPage() {
             >
               <FaRedo size={16} color="#fff" />
             </div>
+            {showStudioDrawer && (
+              <div
+                onClick={() => setStudioDrawerOpen((prev) => !prev)}
+                style={{ ...iconButtonStyle, ...(studioDrawerOpen ? toggleActiveStyle : null) }}
+                title={studioDrawerOpen ? 'Hide Tracks' : 'Show Tracks'}
+                aria-label={studioDrawerOpen ? 'Hide Tracks' : 'Show Tracks'}
+              >
+                {studioDrawerOpen ? <FaChevronDown size={16} /> : <FaChevronUp size={16} />}
+              </div>
+            )}
             <div
               onClick={() => {
                 setShowInfo((prev) => !prev);
