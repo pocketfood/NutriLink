@@ -23,8 +23,9 @@ const STUDIO_TRACK_COLORS = [
   { wave: 'rgba(150,196,255,0.7)', progress: '#6aa6ff' },
 ];
 
-export default function WatchPage() {
-  const { id } = useParams();
+export default function WatchPage({ idOverride } = {}) {
+  const params = useParams();
+  const resolvedId = idOverride || params.id || params['*'];
   const [videoData, setVideoData] = useState(null);
   const [error, setError] = useState(null);
   const [showQR, setShowQR] = useState(false);
@@ -170,11 +171,19 @@ export default function WatchPage() {
 
   useEffect(() => {
     async function fetchVideo() {
+      if (!resolvedId) {
+        setError('No video specified.');
+        setVideoData(null);
+        return;
+      }
       try {
-        const res = await fetch(`https://ogoyhmlvdwypuizr.public.blob.vercel-storage.com/videos/${id}.json`);
+        const res = await fetch(
+          `https://ogoyhmlvdwypuizr.public.blob.vercel-storage.com/videos/${resolvedId}.json`
+        );
         if (!res.ok) throw new Error('Video not found or expired');
         const data = await res.json();
         setVideoData(data);
+        setError(null);
         setLoopEnabled(Boolean(data.loop ?? data.loopEnabled));
         if (typeof data.volume === 'number') setVolume(data.volume);
       } catch (err) {
@@ -183,7 +192,7 @@ export default function WatchPage() {
     }
 
     fetchVideo();
-  }, [id]);
+  }, [resolvedId]);
 
   useEffect(() => {
     const updateLayout = () => {
