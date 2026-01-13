@@ -15,8 +15,9 @@ import {
 import Hls from 'hls.js';
 import WaveSurfer from 'wavesurfer.js';
 
-export default function WatchMultiPage() {
-  const { id } = useParams();
+export default function WatchMultiPage({ idOverride } = {}) {
+  const params = useParams();
+  const rawId = idOverride ?? params.id ?? params['*'] ?? '';
   const navigate = useNavigate();
   const [videoData, setVideoData] = useState([]);
   const [volume, setVolume] = useState(1);
@@ -47,7 +48,20 @@ export default function WatchMultiPage() {
 
   useEffect(() => {
     async function fetchAllVideos() {
-      const ids = id.split(',').map((value) => value.trim()).filter(Boolean);
+      if (!rawId) {
+        setVideoData([]);
+        setError('No videos specified.');
+        return;
+      }
+      const ids = rawId
+        .split(/[,/]+/)
+        .map((value) => value.trim())
+        .filter(Boolean);
+      if (!ids.length) {
+        setVideoData([]);
+        setError('No videos specified.');
+        return;
+      }
       try {
         const blobs = await Promise.all(
           ids.map(async (blobId) => {
@@ -56,9 +70,13 @@ export default function WatchMultiPage() {
               if (res.status === 404) return [];
               if (!res.ok) throw new Error(`Failed to load ${blobId}`);
               const json = await res.json();
-              const list = Array.isArray(json.videos) ? json.videos : [];
+              const list = Array.isArray(json.videos)
+                ? json.videos
+                : json && json.url
+                  ? [json]
+                  : [];
               const type = json.type;
-              return list.filter(Boolean).map((vid) => ({ ...vid, type }));
+              return list.filter(Boolean).map((vid) => ({ ...vid, type: vid.type ?? type }));
             } catch (err) {
               console.warn('Skipping video blob:', blobId, err);
               return [];
@@ -82,7 +100,7 @@ export default function WatchMultiPage() {
     }
 
     fetchAllVideos();
-  }, [id]);
+  }, [rawId]);
 
   useEffect(() => {
     setPlayingStates({});
