@@ -287,9 +287,16 @@ export default function WatchMultiPage({ idOverride } = {}) {
     return /\.(mp3|m4a|aac|wav|ogg|flac)(\?|#|$)/i.test(value);
   };
 
+  const isVideoUrl = (value) => {
+    if (!value) return false;
+    return /\.(mp4|webm|mov|m4v|mkv)(\?|#|$)/i.test(value);
+  };
+
   const isAudioItem = (vid) => {
     if (!vid) return false;
-    return vid.type === 'audio' || isAudioUrl(vid.url);
+    if (isAudioUrl(vid.url)) return true;
+    if (isVideoUrl(vid.url)) return false;
+    return vid.type === 'audio';
   };
 
   useEffect(() => {
