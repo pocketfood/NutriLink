@@ -113,25 +113,26 @@ body {
   align-items: center;
   justify-content: center;
   overflow: hidden;
-  padding: 0;
+  padding: 5.5rem 1rem 8.5rem;
   box-sizing: border-box;
-  background: #000;
+  background: radial-gradient(circle at center, rgba(19, 44, 86, 0.28), rgba(0, 0, 0, 0.96));
   overscroll-behavior: contain;
 }
 
 .x-post-embed-target {
-  width: min(590px, calc(100vw - 2rem));
-  max-height: calc(100vh - 12rem);
+  width: min(550px, calc(100vw - 2rem));
+  max-height: none;
   min-height: 260px;
-  overflow: auto;
-  padding: 0.6rem;
-  border: 1px solid rgba(127, 176, 255, 0.28);
-  border-radius: 8px;
-  background: linear-gradient(180deg, rgba(8, 22, 42, 0.9), rgba(4, 10, 20, 0.94));
-  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.48);
+  overflow: visible;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
   box-sizing: border-box;
-  scrollbar-width: thin;
-  scrollbar-color: rgba(127, 176, 255, 0.55) rgba(255, 255, 255, 0.08);
+  transform: scale(var(--x-post-scale, 1));
+  transform-origin: center center;
+  transition: transform 0.18s ease;
 }
 
 .x-post-embed-target iframe {
@@ -141,48 +142,13 @@ body {
   border-radius: 6px;
 }
 
-.x-post-embed-target--video {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  max-height: none;
-  min-height: 0;
-  height: 100%;
-  overflow: hidden;
-  padding: 0;
-  border: 0;
-  border-radius: 0;
-  background: #000;
-  box-shadow: none;
-}
-
-.x-post-embed-target--video iframe {
-  position: absolute !important;
-  inset: 0 !important;
-  width: 100% !important;
-  max-width: none !important;
-  height: 100% !important;
-  min-height: 100% !important;
-  border-radius: 0;
-}
-
 .x-post-embed-target .twitter-video,
 .x-post-embed-target .twitter-tweet {
   margin: 0 auto !important;
 }
 
-.x-post-embed-target--video .twitter-video {
-  width: 100% !important;
-  height: 100% !important;
-}
-
-.x-post-embed-target--video > * {
-  width: 100% !important;
-  height: 100% !important;
-}
-
 .x-post-embed-target--post {
-  margin: 5.5rem 1rem 8.5rem;
+  margin: 0;
 }
 
 .x-post-embed-error {
@@ -210,20 +176,13 @@ body {
 }
 
 @media (max-width: 720px) {
+  .x-post-embed-shell {
+    padding: 4.8rem 0.75rem 7.4rem;
+  }
+
   .x-post-embed-target {
     width: min(100%, 560px);
-    max-height: calc(100vh - 10rem);
-    padding: 0.45rem;
-  }
-
-  .x-post-embed-target--video {
-    width: 100%;
-    max-height: none;
     padding: 0;
-  }
-
-  .x-post-embed-target--post {
-    margin: 4.8rem 0.75rem 7.4rem;
   }
 }
 
