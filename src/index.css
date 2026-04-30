@@ -112,19 +112,69 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  overflow: auto;
-  padding: 5.5rem 1rem 8.5rem;
+  overflow: hidden;
+  padding: 0;
   box-sizing: border-box;
-  background: radial-gradient(circle at center, rgba(19, 44, 86, 0.36), rgba(0, 0, 0, 0.96));
+  background: #000;
+  overscroll-behavior: contain;
 }
 
 .x-post-embed-target {
-  width: min(550px, 100%);
+  width: min(590px, calc(100vw - 2rem));
+  max-height: calc(100vh - 12rem);
   min-height: 260px;
+  overflow: auto;
+  padding: 0.6rem;
+  border: 1px solid rgba(127, 176, 255, 0.28);
+  border-radius: 8px;
+  background: linear-gradient(180deg, rgba(8, 22, 42, 0.9), rgba(4, 10, 20, 0.94));
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.48);
+  box-sizing: border-box;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(127, 176, 255, 0.55) rgba(255, 255, 255, 0.08);
 }
 
 .x-post-embed-target iframe {
+  display: block !important;
+  margin: 0 auto !important;
   max-width: 100% !important;
+  border-radius: 6px;
+}
+
+.x-post-embed-target--video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  max-height: none;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: #000;
+  box-shadow: none;
+}
+
+.x-post-embed-target--video iframe {
+  width: 100% !important;
+  max-width: none !important;
+  height: 100% !important;
+  border-radius: 0;
+}
+
+.x-post-embed-target .twitter-video,
+.x-post-embed-target .twitter-tweet {
+  margin: 0 auto !important;
+}
+
+.x-post-embed-target--video .twitter-video {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+.x-post-embed-target--post {
+  margin: 5.5rem 1rem 8.5rem;
 }
 
 .x-post-embed-error {
@@ -149,6 +199,24 @@ body {
   margin-top: 0.7rem;
   color: #9ec4ff;
   text-decoration: underline;
+}
+
+@media (max-width: 720px) {
+  .x-post-embed-target {
+    width: min(100%, 560px);
+    max-height: calc(100vh - 10rem);
+    padding: 0.45rem;
+  }
+
+  .x-post-embed-target--video {
+    width: 100%;
+    max-height: none;
+    padding: 0;
+  }
+
+  .x-post-embed-target--post {
+    margin: 4.8rem 0.75rem 7.4rem;
+  }
 }
 
 @keyframes media-loading-spin {
