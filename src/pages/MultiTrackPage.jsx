@@ -12,6 +12,8 @@ import {
 } from 'react-icons/fa';
 import Multitrack from 'wavesurfer-multitrack';
 import Hls from 'hls.js';
+import MediaLoadingOverlay from '../components/MediaLoadingOverlay';
+import { nextMediaLoadState } from '../utils/mediaLoading';
 
 const TRACK_COLORS = [
   { wave: 'rgba(127,176,255,0.7)', progress: '#4da2ff' },
@@ -46,6 +48,11 @@ export default function MultiTrackPage() {
   const [videoMuted, setVideoMuted] = useState(true);
   const [videoVolume, setVideoVolume] = useState(1);
   const [videoError, setVideoError] = useState(null);
+  const [videoLoadState, setVideoLoadState] = useState({
+    isLoading: false,
+    loadedPercent: null,
+    label: 'Loading',
+  });
   const [shareUrl, setShareUrl] = useState('');
   const [saveError, setSaveError] = useState(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -74,6 +81,15 @@ export default function MultiTrackPage() {
       return url;
     }
     return `/api/proxy?url=${encodeURIComponent(url)}`;
+  };
+
+  const syncVideoLoadState = (options = {}) => {
+    const video = videoRef.current;
+    setVideoLoadState((current) => nextMediaLoadState(video, {
+      isLoading: options.isLoading ?? current.isLoading,
+      label: options.label ?? current.label,
+      loadedPercent: current.loadedPercent,
+    }));
   };
 
   const parseUrls = (value) =>
@@ -250,11 +266,17 @@ export default function MultiTrackPage() {
       video.removeAttribute('src');
       video.load();
       setVideoError(null);
+      setVideoLoadState({ isLoading: false, loadedPercent: null, label: 'Loading' });
       return;
     }
 
     const proxied = getMediaProxyUrl(src);
     setVideoError(null);
+    setVideoLoadState({
+      isLoading: true,
+      loadedPercent: null,
+      label: proxied.endsWith('.m3u8') ? 'Starting stream' : 'Loading',
+    });
 
     if (proxied.endsWith('.m3u8')) {
       if (Hls.isSupported()) {
@@ -267,7 +289,19 @@ export default function MultiTrackPage() {
         hls.loadSource(proxied);
         hls.attachMedia(video);
         hls.on(Hls.Events.ERROR, (event, data) => {
-          if (data.fatal) setVideoError('Video preview failed to load.');
+          if (data.fatal) {
+            syncVideoLoadState({ isLoading: false, label: 'Stream error' });
+            setVideoError('Video preview failed to load.');
+          }
+        });
+        hls.on(Hls.Events.MANIFEST_LOADING, () => {
+          syncVideoLoadState({ isLoading: true, label: 'Starting stream' });
+        });
+        hls.on(Hls.Events.FRAG_LOADING, () => {
+          syncVideoLoadState({ isLoading: true, label: 'Buffering' });
+        });
+        hls.on(Hls.Events.FRAG_BUFFERED, () => {
+          syncVideoLoadState({ isLoading: false, label: 'Streaming' });
         });
         videoHlsRef.current = hls;
       } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
@@ -524,7 +558,7 @@ export default function MultiTrackPage() {
     if (!shareUrl || !navigator.clipboard) return;
     try {
       await navigator.clipboard.writeText(shareUrl);
-    } catch (err) {
+    } catch {
       setSaveError('Failed to copy link.');
     }
   };
@@ -623,6 +657,7 @@ export default function MultiTrackPage() {
   };
 
   const videoPreviewWrapStyle = {
+    position: 'relative',
     marginTop: '1rem',
     borderRadius: '12px',
     overflow: 'hidden',
@@ -769,8 +804,29 @@ export default function MultiTrackPage() {
               preload="auto"
               crossOrigin="anonymous"
               muted={videoMuted}
+              onLoadStart={() => syncVideoLoadState({
+                isLoading: true,
+                label: videoUrl.trim().endsWith('.m3u8') ? 'Starting stream' : 'Loading',
+              })}
+              onLoadedMetadata={() => syncVideoLoadState({
+                isLoading: true,
+                label: videoUrl.trim().endsWith('.m3u8') ? 'Buffering stream' : 'Loading',
+              })}
+              onProgress={() => syncVideoLoadState()}
+              onCanPlay={() => syncVideoLoadState({ isLoading: false, label: 'Ready' })}
+              onPlaying={() => syncVideoLoadState({ isLoading: false, label: 'Playing' })}
+              onWaiting={() => syncVideoLoadState({ isLoading: true, label: 'Buffering' })}
+              onStalled={() => syncVideoLoadState({ isLoading: true, label: 'Buffering' })}
+              onSeeking={() => syncVideoLoadState({ isLoading: true, label: 'Seeking' })}
+              onSeeked={() => syncVideoLoadState({ isLoading: false, label: 'Ready' })}
+              onError={() => syncVideoLoadState({ isLoading: false, label: 'Load error' })}
               onClick={togglePlay}
               style={videoPreviewStyle}
+            />
+            <MediaLoadingOverlay
+              visible={videoLoadState.isLoading}
+              percent={videoLoadState.loadedPercent}
+              label={videoLoadState.label}
             />
             {videoError && <div style={videoErrorStyle}>{videoError}</div>}
           </div>
