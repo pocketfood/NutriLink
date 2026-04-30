@@ -27,6 +27,18 @@ const STUDIO_TRACK_COLORS = [
   { wave: 'rgba(150,196,255,0.7)', progress: '#6aa6ff' },
 ];
 
+function formatClockTime(seconds = 0) {
+  const safeSeconds = Math.max(0, Math.round(seconds));
+  const minutes = Math.floor(safeSeconds / 60);
+  const secondsRemainder = safeSeconds % 60;
+  return `${minutes}:${`0${secondsRemainder}`.slice(-2)}`;
+}
+
+function formatTimeLeft(duration = 0, currentTime = 0) {
+  if (!Number.isFinite(duration) || duration <= 0) return '0:00 left';
+  return `${formatClockTime(duration - currentTime)} left`;
+}
+
 export default function WatchPage({ idOverride } = {}) {
   const params = useParams();
   const resolvedId = idOverride || params.id || params['*'];
@@ -381,7 +393,7 @@ export default function WatchPage({ idOverride } = {}) {
           bar.style.width = `${percent}%`;
         }
         if (seekTimeRef.current) seekTimeRef.current.textContent = formatTime(currentTime);
-        if (seekDurationRef.current) seekDurationRef.current.textContent = formatTime(duration);
+        if (seekDurationRef.current) seekDurationRef.current.textContent = formatTimeLeft(duration, currentTime);
         if (waveTimeRef.current) waveTimeRef.current.textContent = formatTime(currentTime);
         if (waveDurationRef.current) waveDurationRef.current.textContent = formatTime(duration);
         const isPlayingNow = multitrack.isPlaying();
@@ -414,7 +426,7 @@ export default function WatchPage({ idOverride } = {}) {
         bar.style.width = `${percent}%`;
       }
       if (seekTimeRef.current) seekTimeRef.current.textContent = formatTime(currentTime);
-      if (seekDurationRef.current) seekDurationRef.current.textContent = formatTime(duration);
+      if (seekDurationRef.current) seekDurationRef.current.textContent = formatTimeLeft(duration, currentTime);
     }, 100);
     return () => clearInterval(interval);
   }, [primaryMediaRef, useStudioPlayback, hasStudioVideo]);
@@ -858,7 +870,7 @@ export default function WatchPage({ idOverride } = {}) {
   };
 
   const seekDurationStyle = {
-    minWidth: '3.4rem',
+    minWidth: '4.8rem',
     fontSize: '0.8rem',
     color: '#cfe2ff',
     fontVariantNumeric: 'tabular-nums',
