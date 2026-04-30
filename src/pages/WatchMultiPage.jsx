@@ -19,6 +19,18 @@ import XPostEmbed from '../components/XPostEmbed';
 import { nextMediaLoadState } from '../utils/mediaLoading';
 import { getCanonicalXPostUrl, isXPostUrl } from '../utils/xPost';
 
+function formatClockTime(seconds = 0) {
+  const safeSeconds = Math.max(0, Math.round(seconds));
+  const minutes = Math.floor(safeSeconds / 60);
+  const secondsRemainder = safeSeconds % 60;
+  return `${minutes}:${`0${secondsRemainder}`.slice(-2)}`;
+}
+
+function formatTimeLeft(duration = 0, currentTime = 0) {
+  if (!Number.isFinite(duration) || duration <= 0) return '0:00 left';
+  return `${formatClockTime(duration - currentTime)} left`;
+}
+
 export default function WatchMultiPage({ idOverride } = {}) {
   const params = useParams();
   const rawId = idOverride ?? params.id ?? params['*'] ?? '';
@@ -55,6 +67,7 @@ export default function WatchMultiPage({ idOverride } = {}) {
   const elasticFrameRef = useRef(null);
   const lastScrollTopRef = useRef(0);
   const scrollIdleTimerRef = useRef(null);
+  const xScrollLockRef = useRef(false);
 
   useEffect(() => {
     async function fetchAllVideos() {
@@ -241,7 +254,7 @@ export default function WatchMultiPage({ idOverride } = {}) {
           seekTimeRefs.current[i].textContent = formatTime(currentTime);
         }
         if (seekDurationRefs.current[i]) {
-          seekDurationRefs.current[i].textContent = formatTime(duration);
+          seekDurationRefs.current[i].textContent = formatTimeLeft(duration, currentTime);
         }
       });
     }, 100);
@@ -625,6 +638,34 @@ export default function WatchMultiPage({ idOverride } = {}) {
     }
   };
 
+  const goToPreviousItem = (index) => {
+    const previousIndex = index - 1;
+    if (previousIndex < 0) {
+      if (feedRef.current) feedRef.current.scrollTo({ top: 0, behavior: 'smooth' });
+      return;
+    }
+
+    const previousItem = itemRefs.current[previousIndex];
+    if (previousItem) {
+      previousItem.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  };
+
+  const handleXPostScrollIntent = (index, deltaY) => {
+    if (Math.abs(deltaY) < 12 || xScrollLockRef.current) return;
+
+    xScrollLockRef.current = true;
+    window.setTimeout(() => {
+      xScrollLockRef.current = false;
+    }, 650);
+
+    if (deltaY > 0) {
+      goToNextItem(index);
+    } else {
+      goToPreviousItem(index);
+    }
+  };
+
   const toggleMute = () => {
     setMuted((prev) => {
       const newMuted = !prev;
@@ -776,7 +817,7 @@ export default function WatchMultiPage({ idOverride } = {}) {
   };
 
   const seekDurationStyle = {
-    minWidth: '3.4rem',
+    minWidth: '4.8rem',
     fontSize: '0.8rem',
     color: '#cfe2ff',
     fontVariantNumeric: 'tabular-nums',
@@ -975,7 +1016,10 @@ export default function WatchMultiPage({ idOverride } = {}) {
           >
             <div ref={(el) => (elasticShellRefs.current[index] = el)} style={mediaElasticShellStyle}>
               {isXPost ? (
-                <XPostEmbed url={getCanonicalXPostUrl(vid.url)} />
+                <XPostEmbed
+                  url={getCanonicalXPostUrl(vid.url)}
+                  onScrollIntent={(deltaY) => handleXPostScrollIntent(index, deltaY)}
+                />
               ) : (
                 <>
                   <video
