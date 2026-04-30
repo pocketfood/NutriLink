@@ -74,6 +74,41 @@ function waitForWidgetFrame(container) {
   });
 }
 
+function findWidgetFrame(element, container) {
+  return element?.tagName === 'IFRAME' ? element : container.querySelector('iframe');
+}
+
+function hasVideoWidgetSignature(element, container) {
+  const frame = findWidgetFrame(element, container);
+  const classValues = [
+    element?.className,
+    frame?.className,
+  ]
+    .map((value) => String(value || '').toLowerCase())
+    .join(' ');
+  const frameTitle = String(frame?.getAttribute('title') || '').toLowerCase();
+  const frameSrc = String(frame?.getAttribute('src') || '').toLowerCase();
+
+  return (
+    classValues.includes('twitter-video') ||
+    frameSrc.includes('video') ||
+    frameTitle.includes('twitter video') ||
+    frameTitle.includes('x video')
+  );
+}
+
+async function fetchVideoOEmbedHtml(canonicalUrl, signal) {
+  const params = new URLSearchParams({ url: canonicalUrl });
+  const response = await fetch(`/api/x-oembed?${params.toString()}`, { signal });
+  const data = await response.json();
+
+  if (!response.ok || !data?.html || !data.html.includes('twitter-video')) {
+    throw new Error(data?.error || 'X video embed unavailable.');
+  }
+
+  return data.html;
+}
+
 function createTweetEmbed(twttr, postId, container) {
   return twttr.widgets
     .createTweet(postId, container, {
@@ -89,37 +124,44 @@ function createTweetEmbed(twttr, postId, container) {
     });
 }
 
-function createVideoEmbed(twttr, postId, container, canonicalUrl) {
-  if (typeof twttr.widgets.createVideo === 'function') {
-    return twttr.widgets
-      .createVideo(postId, container, {
-        status: 'hidden',
-        lang: 'en',
-      })
-      .then((element) => {
-        if (!element) throw new Error('X video widget did not render.');
-        return { element, type: 'video' };
-      });
-  }
-
-  const blockquote = document.createElement('blockquote');
-  blockquote.className = 'twitter-video';
-  blockquote.dataset.status = 'hidden';
-  blockquote.lang = 'en';
-
-  const link = document.createElement('a');
-  link.href = canonicalUrl;
-  link.textContent = canonicalUrl;
-  blockquote.appendChild(link);
-  container.appendChild(blockquote);
-
-  return Promise.resolve(twttr.widgets.load(container))
+function createOEmbedVideo(twttr, container, canonicalUrl, signal) {
+  return fetchVideoOEmbedHtml(canonicalUrl, signal)
+    .then((html) => {
+      container.innerHTML = html;
+      return Promise.resolve(twttr.widgets.load(container));
+    })
     .then(() => waitForWidgetFrame(container))
-    .then((element) => ({ element, type: 'video' }));
+    .then((element) => {
+      if (!hasVideoWidgetSignature(element, container)) {
+        throw new Error('X rendered a post widget instead of a video widget.');
+      }
+      return { element, type: 'video' };
+    });
 }
 
-function createBestXEmbed(twttr, postId, container, canonicalUrl) {
-  return createVideoEmbed(twttr, postId, container, canonicalUrl).catch(() => {
+function createVideoEmbed(twttr, postId, container) {
+  if (typeof twttr.widgets.createVideo !== 'function') {
+    return Promise.reject(new Error('X video widget factory unavailable.'));
+  }
+
+  return twttr.widgets
+    .createVideo(postId, container, {
+      status: 'hidden',
+      lang: 'en',
+    })
+    .then((element) => {
+      if (!element || !hasVideoWidgetSignature(element, container)) {
+        throw new Error('X video widget did not render.');
+      }
+      return { element, type: 'video' };
+    });
+}
+
+function createBestXEmbed(twttr, postId, container, canonicalUrl, signal) {
+  return createOEmbedVideo(twttr, container, canonicalUrl, signal).catch(() => {
+    container.innerHTML = '';
+    return createVideoEmbed(twttr, postId, container);
+  }).catch(() => {
     container.innerHTML = '';
     return createTweetEmbed(twttr, postId, container);
   });
@@ -133,19 +175,23 @@ function stretchVideoWidget(element, container, type) {
 
   frame.setAttribute('width', '100%');
   frame.setAttribute('height', '100%');
-  frame.style.width = '100%';
-  frame.style.height = '100%';
-  frame.style.maxWidth = 'none';
+  frame.style.setProperty('position', 'absolute', 'important');
+  frame.style.setProperty('inset', '0', 'important');
+  frame.style.setProperty('width', '100%', 'important');
+  frame.style.setProperty('max-width', 'none', 'important');
+  frame.style.setProperty('height', '100%', 'important');
+  frame.style.setProperty('min-height', '100%', 'important');
 }
 
 export default function XPostEmbed({ url, onReady, onError }) {
   const containerRef = useRef(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [widgetType, setWidgetType] = useState('video');
+  const [widgetType, setWidgetType] = useState('post');
 
   useEffect(() => {
     let cancelled = false;
+    const controller = new AbortController();
     const postId = getXPostId(url);
     const container = containerRef.current;
 
@@ -159,7 +205,7 @@ export default function XPostEmbed({ url, onReady, onError }) {
 
     setIsLoading(true);
     setError(null);
-    setWidgetType('video');
+    setWidgetType('post');
     container.innerHTML = '';
 
     const timeout = window.setTimeout(() => {
@@ -174,7 +220,7 @@ export default function XPostEmbed({ url, onReady, onError }) {
     const canonicalUrl = getCanonicalXPostUrl(url);
 
     loadXWidgets()
-      .then((twttr) => createBestXEmbed(twttr, postId, container, canonicalUrl))
+      .then((twttr) => createBestXEmbed(twttr, postId, container, canonicalUrl, controller.signal))
       .then(({ element, type }) => {
         if (cancelled) return;
         clearEmbedTimeout();
@@ -187,6 +233,7 @@ export default function XPostEmbed({ url, onReady, onError }) {
         }
         stretchVideoWidget(element, container, type);
         window.requestAnimationFrame(() => stretchVideoWidget(element, container, type));
+        window.setTimeout(() => stretchVideoWidget(element, container, type), 500);
         if (onReady) onReady();
       })
       .catch(() => {
@@ -199,6 +246,7 @@ export default function XPostEmbed({ url, onReady, onError }) {
 
     return () => {
       cancelled = true;
+      controller.abort();
       clearEmbedTimeout();
       if (container) container.innerHTML = '';
     };
