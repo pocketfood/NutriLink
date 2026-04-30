@@ -157,9 +157,12 @@ body {
 }
 
 .x-post-embed-target--video iframe {
+  position: absolute !important;
+  inset: 0 !important;
   width: 100% !important;
   max-width: none !important;
   height: 100% !important;
+  min-height: 100% !important;
   border-radius: 0;
 }
 
@@ -169,6 +172,11 @@ body {
 }
 
 .x-post-embed-target--video .twitter-video {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+.x-post-embed-target--video > * {
   width: 100% !important;
   height: 100% !important;
 }
