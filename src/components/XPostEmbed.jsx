@@ -74,29 +74,6 @@ function waitForWidgetFrame(container) {
   });
 }
 
-function findWidgetFrame(element, container) {
-  return element?.tagName === 'IFRAME' ? element : container.querySelector('iframe');
-}
-
-function hasVideoWidgetSignature(element, container) {
-  const frame = findWidgetFrame(element, container);
-  const classValues = [
-    element?.className,
-    frame?.className,
-  ]
-    .map((value) => String(value || '').toLowerCase())
-    .join(' ');
-  const frameTitle = String(frame?.getAttribute('title') || '').toLowerCase();
-  const frameSrc = String(frame?.getAttribute('src') || '').toLowerCase();
-
-  return (
-    classValues.includes('twitter-video') ||
-    frameSrc.includes('video') ||
-    frameTitle.includes('twitter video') ||
-    frameTitle.includes('x video')
-  );
-}
-
 async function fetchVideoOEmbedHtml(canonicalUrl, signal) {
   const params = new URLSearchParams({ url: canonicalUrl });
   const response = await fetch(`/api/x-oembed?${params.toString()}`, { signal });
@@ -132,9 +109,6 @@ function createOEmbedVideo(twttr, container, canonicalUrl, signal) {
     })
     .then(() => waitForWidgetFrame(container))
     .then((element) => {
-      if (!hasVideoWidgetSignature(element, container)) {
-        throw new Error('X rendered a post widget instead of a video widget.');
-      }
       return { element, type: 'video' };
     });
 }
@@ -150,7 +124,7 @@ function createVideoEmbed(twttr, postId, container) {
       lang: 'en',
     })
     .then((element) => {
-      if (!element || !hasVideoWidgetSignature(element, container)) {
+      if (!element) {
         throw new Error('X video widget did not render.');
       }
       return { element, type: 'video' };
