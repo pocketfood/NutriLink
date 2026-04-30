@@ -17,7 +17,9 @@ import WaveSurfer from 'wavesurfer.js';
 import Multitrack from 'wavesurfer-multitrack';
 import Hls from 'hls.js';
 import MediaLoadingOverlay from '../components/MediaLoadingOverlay';
+import XPostEmbed from '../components/XPostEmbed';
 import { nextMediaLoadState } from '../utils/mediaLoading';
+import { getCanonicalXPostUrl, isXPostUrl } from '../utils/xPost';
 
 const STUDIO_TRACK_COLORS = [
   { wave: 'rgba(127,176,255,0.7)', progress: '#4da2ff' },
@@ -176,14 +178,16 @@ export default function WatchPage({ idOverride } = {}) {
     : videoData?.mixUrl || (videoData?.type === 'studio' && isAudioUrl(videoData?.url) ? videoData.url : null);
   const isAudioContent =
     !useStudioPlayback && videoData && !hasStudioVideo && (videoData.type === 'audio' || isAudioUrl(videoData.url));
+  const isXPostPlayback = !useStudioPlayback && !hasStudioVideo && !mixUrl && isXPostUrl(videoData?.url);
   const isAudioOnlyPlayback = isAudioContent || (useStudioPlayback && !hasStudioVideo);
   const showAudioWaveform = isAudioContent;
   const showStudioDrawer = useStudioPlayback;
-  const mediaSrc = videoData?.url ? getMediaProxyUrl(videoData.url) : null;
+  const xPostUrl = isXPostPlayback ? getCanonicalXPostUrl(videoData.url) : null;
+  const mediaSrc = videoData?.url && !isXPostPlayback ? getMediaProxyUrl(videoData.url) : null;
   const audioSrc = mixUrl ? getMediaProxyUrl(mixUrl) : isAudioContent ? mediaSrc : null;
-  const videoSrc = hasStudioVideo ? getMediaProxyUrl(videoData.videoUrl) : mixUrl ? null : mediaSrc;
+  const videoSrc = isXPostPlayback ? null : hasStudioVideo ? getMediaProxyUrl(videoData.videoUrl) : mixUrl ? null : mediaSrc;
   const primaryMediaRef = mixUrl ? audioRef : videoRef;
-  const downloadUrl = mixUrl || videoData?.url || videoData?.videoUrl;
+  const downloadUrl = xPostUrl || mixUrl || videoData?.url || videoData?.videoUrl;
 
   useEffect(() => {
     async function fetchVideo() {
@@ -641,6 +645,7 @@ export default function WatchPage({ idOverride } = {}) {
   };
 
   const toggleMute = () => {
+    if (isXPostPlayback) return;
     setMuted((prev) => {
       const next = !prev;
       if (!useStudioPlayback) {
@@ -652,11 +657,13 @@ export default function WatchPage({ idOverride } = {}) {
   };
 
   const toggleLoop = () => {
+    if (isXPostPlayback) return;
     setLoopEnabled((prev) => !prev);
     studioLoopArmedRef.current = false;
   };
 
   const handleSeek = (e) => {
+    if (isXPostPlayback) return;
     const bar = e.currentTarget;
     const rect = bar.getBoundingClientRect();
     const x = e.clientX - rect.left;
@@ -681,6 +688,10 @@ export default function WatchPage({ idOverride } = {}) {
 
   const togglePlayback = () => {
     registerUserGesture();
+    if (isXPostPlayback) {
+      if (downloadUrl) window.open(downloadUrl, '_blank');
+      return;
+    }
     if (useStudioPlayback && studioRef.current) {
       const multitrack = studioRef.current;
       if (multitrack.isPlaying()) {
@@ -1127,47 +1138,53 @@ export default function WatchPage({ idOverride } = {}) {
           style={{ display: 'none' }}
         />
       )}
-      <video
-        ref={videoRef}
-        autoPlay={!useStudioPlayback}
-        controls={false}
-        playsInline
-        preload="auto"
-        crossOrigin="anonymous"
-        onPlay={handlePlay}
-        onPause={handlePause}
-        onLoadStart={() => syncMediaLoadState({
-          isLoading: !isAudioOnlyPlayback && !!videoSrc,
-          label: videoSrc?.endsWith('.m3u8') ? 'Starting stream' : 'Loading',
-        })}
-        onLoadedMetadata={() => syncMediaLoadState({
-          isLoading: !isAudioOnlyPlayback && !!videoSrc,
-          label: videoSrc?.endsWith('.m3u8') ? 'Buffering stream' : 'Loading',
-        })}
-        onProgress={() => syncMediaLoadState()}
-        onCanPlay={() => syncMediaLoadState({ isLoading: false, label: 'Ready' })}
-        onPlaying={() => syncMediaLoadState({ isLoading: false, label: 'Playing' })}
-        onWaiting={() => syncMediaLoadState({ isLoading: !isAudioOnlyPlayback && !!videoSrc, label: 'Buffering' })}
-        onStalled={() => syncMediaLoadState({ isLoading: !isAudioOnlyPlayback && !!videoSrc, label: 'Buffering' })}
-        onSeeking={() => syncMediaLoadState({ isLoading: !isAudioOnlyPlayback && !!videoSrc, label: 'Seeking' })}
-        onSeeked={() => syncMediaLoadState({ isLoading: false, label: 'Ready' })}
-        onError={() => syncMediaLoadState({ isLoading: false, label: 'Load error' })}
-        onClick={togglePlayback}
-        style={{
-          width: '100%',
-          height: '100vh',
-          objectFit: 'contain',
-          cursor: 'pointer',
-          opacity: isAudioOnlyPlayback ? 0 : 1,
-          pointerEvents: isAudioOnlyPlayback ? 'none' : 'auto',
-          transition: 'opacity 0.35s ease',
-        }}
-      />
-      <MediaLoadingOverlay
-        visible={!isAudioOnlyPlayback && !!videoSrc && mediaLoadState.isLoading}
-        percent={mediaLoadState.loadedPercent}
-        label={mediaLoadState.label}
-      />
+      {isXPostPlayback ? (
+        <XPostEmbed url={xPostUrl} />
+      ) : (
+        <>
+          <video
+            ref={videoRef}
+            autoPlay={!useStudioPlayback}
+            controls={false}
+            playsInline
+            preload="auto"
+            crossOrigin="anonymous"
+            onPlay={handlePlay}
+            onPause={handlePause}
+            onLoadStart={() => syncMediaLoadState({
+              isLoading: !isAudioOnlyPlayback && !!videoSrc,
+              label: videoSrc?.endsWith('.m3u8') ? 'Starting stream' : 'Loading',
+            })}
+            onLoadedMetadata={() => syncMediaLoadState({
+              isLoading: !isAudioOnlyPlayback && !!videoSrc,
+              label: videoSrc?.endsWith('.m3u8') ? 'Buffering stream' : 'Loading',
+            })}
+            onProgress={() => syncMediaLoadState()}
+            onCanPlay={() => syncMediaLoadState({ isLoading: false, label: 'Ready' })}
+            onPlaying={() => syncMediaLoadState({ isLoading: false, label: 'Playing' })}
+            onWaiting={() => syncMediaLoadState({ isLoading: !isAudioOnlyPlayback && !!videoSrc, label: 'Buffering' })}
+            onStalled={() => syncMediaLoadState({ isLoading: !isAudioOnlyPlayback && !!videoSrc, label: 'Buffering' })}
+            onSeeking={() => syncMediaLoadState({ isLoading: !isAudioOnlyPlayback && !!videoSrc, label: 'Seeking' })}
+            onSeeked={() => syncMediaLoadState({ isLoading: false, label: 'Ready' })}
+            onError={() => syncMediaLoadState({ isLoading: false, label: 'Load error' })}
+            onClick={togglePlayback}
+            style={{
+              width: '100%',
+              height: '100vh',
+              objectFit: 'contain',
+              cursor: 'pointer',
+              opacity: isAudioOnlyPlayback ? 0 : 1,
+              pointerEvents: isAudioOnlyPlayback ? 'none' : 'auto',
+              transition: 'opacity 0.35s ease',
+            }}
+          />
+          <MediaLoadingOverlay
+            visible={!isAudioOnlyPlayback && !!videoSrc && mediaLoadState.isLoading}
+            percent={mediaLoadState.loadedPercent}
+            label={mediaLoadState.label}
+          />
+        </>
+      )}
 
       {showAudioWaveform && (
         <div style={audioWaveWrapStyle}>
@@ -1263,6 +1280,7 @@ export default function WatchPage({ idOverride } = {}) {
 
       <div style={controlsBarStyle}>
         <div style={controlsRowStyle}>
+          {!isXPostPlayback && (
           <div style={controlsGroupStyle}>
             <div onClick={toggleMute} style={iconButtonStyle} title={muted ? 'Unmute' : 'Mute'}>
               {muted ? <FaVolumeMute size={18} /> : <FaVolumeUp size={18} />}
@@ -1278,14 +1296,17 @@ export default function WatchPage({ idOverride } = {}) {
               aria-label="Volume"
             />
           </div>
+          )}
           <div style={controlsGroupStyle}>
-            <div
-              onClick={toggleLoop}
-              style={{ ...iconButtonStyle, ...(loopEnabled ? toggleActiveStyle : null) }}
-              title={loopEnabled ? 'Disable Loop' : 'Enable Loop'}
-            >
-              <FaRedo size={16} color="#fff" />
-            </div>
+            {!isXPostPlayback && (
+              <div
+                onClick={toggleLoop}
+                style={{ ...iconButtonStyle, ...(loopEnabled ? toggleActiveStyle : null) }}
+                title={loopEnabled ? 'Disable Loop' : 'Enable Loop'}
+              >
+                <FaRedo size={16} color="#fff" />
+              </div>
+            )}
             {showStudioDrawer && (
               <div
                 onClick={() => setStudioDrawerOpen((prev) => !prev)}
@@ -1317,6 +1338,7 @@ export default function WatchPage({ idOverride } = {}) {
         {needsUserStart && useStudioPlayback && (
           <div style={autoplayNoticeStyle}>Tap Play to start audio (browser policy).</div>
         )}
+        {!isXPostPlayback && (
         <div style={seekRowStyle}>
           <button
             type="button"
@@ -1334,6 +1356,7 @@ export default function WatchPage({ idOverride } = {}) {
           </div>
           <div ref={seekDurationRef} style={seekDurationStyle}>0:00</div>
         </div>
+        )}
       </div>
 
       <div style={titleBlockStyle}>
