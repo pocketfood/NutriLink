@@ -144,6 +144,13 @@ body {
   z-index: 9;
 }
 
+.x-post-embed-error a {
+  display: inline-block;
+  margin-top: 0.7rem;
+  color: #9ec4ff;
+  text-decoration: underline;
+}
+
 @keyframes media-loading-spin {
   to {
     transform: rotate(360deg);
