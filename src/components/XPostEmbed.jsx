@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import MediaLoadingOverlay from './MediaLoadingOverlay';
-import { getXPostId } from '../utils/xPost';
+import { getCanonicalXPostUrl, getXPostId } from '../utils/xPost';
 
 let widgetsPromise = null;
+const EMBED_TIMEOUT_MS = 9000;
 
 function loadXWidgets() {
   if (typeof window === 'undefined') return Promise.reject(new Error('X embeds require a browser.'));
@@ -30,16 +31,16 @@ function loadXWidgets() {
           return;
         }
 
-      const script = document.createElement('script');
+        const script = document.createElement('script');
         script.src = scriptSources[index];
-      script.async = true;
-      script.charset = 'utf-8';
-      script.dataset.nutrilinkXWidgets = 'true';
+        script.async = true;
+        script.charset = 'utf-8';
+        script.dataset.nutrilinkXWidgets = 'true';
         script.onerror = () => {
           script.remove();
           appendScript(index + 1);
         };
-      document.body.appendChild(script);
+        document.body.appendChild(script);
       };
 
       appendScript();
@@ -71,6 +72,15 @@ export default function XPostEmbed({ url, onReady, onError }) {
     setError(null);
     container.innerHTML = '';
 
+    const timeout = window.setTimeout(() => {
+      if (cancelled) return;
+      setIsLoading(false);
+      setError('X embed is blocked or taking too long to load.');
+      if (onError) onError();
+    }, EMBED_TIMEOUT_MS);
+
+    const clearEmbedTimeout = () => window.clearTimeout(timeout);
+
     loadXWidgets()
       .then((twttr) =>
         twttr.widgets.createTweet(postId, container, {
@@ -83,6 +93,7 @@ export default function XPostEmbed({ url, onReady, onError }) {
       )
       .then((element) => {
         if (cancelled) return;
+        clearEmbedTimeout();
         setIsLoading(false);
         if (!element) {
           setError('This X post could not be embedded.');
@@ -93,6 +104,7 @@ export default function XPostEmbed({ url, onReady, onError }) {
       })
       .catch(() => {
         if (cancelled) return;
+        clearEmbedTimeout();
         setIsLoading(false);
         setError('Unable to load the X embed.');
         if (onError) onError();
@@ -100,6 +112,7 @@ export default function XPostEmbed({ url, onReady, onError }) {
 
     return () => {
       cancelled = true;
+      clearEmbedTimeout();
       if (container) container.innerHTML = '';
     };
   }, [url, onReady, onError]);
@@ -108,7 +121,14 @@ export default function XPostEmbed({ url, onReady, onError }) {
     <div className="x-post-embed-shell">
       <div ref={containerRef} className="x-post-embed-target" />
       <MediaLoadingOverlay visible={isLoading} label="Loading X post" />
-      {error && <div className="x-post-embed-error">{error}</div>}
+      {error && (
+        <div className="x-post-embed-error">
+          <div>{error}</div>
+          <a href={getCanonicalXPostUrl(url)} target="_blank" rel="noreferrer">
+            Open on X
+          </a>
+        </div>
+      )}
     </div>
   );
 }
