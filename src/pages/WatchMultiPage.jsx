@@ -15,7 +15,9 @@ import {
 import Hls from 'hls.js';
 import WaveSurfer from 'wavesurfer.js';
 import MediaLoadingOverlay from '../components/MediaLoadingOverlay';
+import XPostEmbed from '../components/XPostEmbed';
 import { nextMediaLoadState } from '../utils/mediaLoading';
+import { getCanonicalXPostUrl, isXPostUrl } from '../utils/xPost';
 
 export default function WatchMultiPage({ idOverride } = {}) {
   const params = useParams();
@@ -125,6 +127,11 @@ export default function WatchMultiPage({ idOverride } = {}) {
     videoRefs.current.forEach((video, index) => {
       const vid = videoData[index];
       if (!video || !vid || !vid.url) return;
+      if (isXPostUrl(vid.url)) {
+        video.removeAttribute('src');
+        video.load();
+        return;
+      }
 
       const mediaSrc = getMediaProxyUrl(vid.url);
 
@@ -562,6 +569,11 @@ export default function WatchMultiPage({ idOverride } = {}) {
   };
 
   const togglePlayback = (index) => {
+    if (isXPostUrl(videoData[index]?.url)) {
+      goToNextItem(index);
+      return;
+    }
+
     const video = videoRefs.current[index];
     if (!video) return;
     if (video.paused) {
@@ -586,17 +598,27 @@ export default function WatchMultiPage({ idOverride } = {}) {
     }
     if (!autoPlayNext) return;
     const vid = videoData[index];
-    if (!isAudioItem(vid)) return;
     const loopValue = loopStates[index] ?? !!vid?.loop;
     if (loopValue) return;
-    const nextIndex = findNextAudioIndex(index);
-    if (nextIndex === null) return;
+    goToNextItem(index);
+  };
+
+  const goToNextItem = (index) => {
+    const nextIndex = isAudioItem(videoData[index]) ? findNextAudioIndex(index) : index + 1;
+    if (nextIndex === null || nextIndex >= videoData.length) {
+      if (feedRef.current) {
+        feedRef.current.scrollTo({ top: feedRef.current.scrollHeight, behavior: 'smooth' });
+      }
+      return;
+    }
+
     const nextItem = itemRefs.current[nextIndex];
     if (nextItem) {
       nextItem.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
+
     const nextVideo = videoRefs.current[nextIndex];
-    if (nextVideo) {
+    if (nextVideo && !isXPostUrl(videoData[nextIndex]?.url)) {
       setTimeout(() => {
         nextVideo.play().catch(() => {});
       }, 300);
@@ -933,6 +955,7 @@ export default function WatchMultiPage({ idOverride } = {}) {
       onTouchStart={revealChrome}
     >
       {videoData.map((vid, index) => {
+        const isXPost = isXPostUrl(vid.url);
         const isAudio = isAudioItem(vid);
         const isPlaying = !!playingStates[index];
         const isLooping = loopStates[index] ?? !!vid.loop;
@@ -951,53 +974,59 @@ export default function WatchMultiPage({ idOverride } = {}) {
             }}
           >
             <div ref={(el) => (elasticShellRefs.current[index] = el)} style={mediaElasticShellStyle}>
-              <video
-                ref={(el) => (videoRefs.current[index] = el)}
-                muted={muted}
-                controls={false}
-                playsInline
-                preload="auto"
-                crossOrigin="anonymous"
-                onLoadStart={() => syncMediaLoadState(index, {
-                  isLoading: !isAudio,
-                  label: vid.url?.endsWith('.m3u8') ? 'Starting stream' : 'Loading',
-                })}
-                onLoadedMetadata={() => syncMediaLoadState(index, {
-                  isLoading: !isAudio,
-                  label: vid.url?.endsWith('.m3u8') ? 'Buffering stream' : 'Loading',
-                })}
-                onProgress={() => syncMediaLoadState(index)}
-                onCanPlay={() => syncMediaLoadState(index, { isLoading: false, label: 'Ready' })}
-                onPlaying={() => syncMediaLoadState(index, { isLoading: false, label: 'Playing' })}
-                onWaiting={() => syncMediaLoadState(index, { isLoading: !isAudio, label: 'Buffering' })}
-                onStalled={() => syncMediaLoadState(index, { isLoading: !isAudio, label: 'Buffering' })}
-                onSeeking={() => syncMediaLoadState(index, { isLoading: !isAudio, label: 'Seeking' })}
-                onSeeked={() => syncMediaLoadState(index, { isLoading: false, label: 'Ready' })}
-                onError={() => syncMediaLoadState(index, { isLoading: false, label: 'Load error' })}
-                onPlay={() => handlePlay(index)}
-                onPause={() => handlePause(index)}
-                onEnded={() => handleEnded(index)}
-                onClick={() => {
-                  const v = videoRefs.current[index];
-                  if (v.paused) v.play();
-                  else v.pause();
-                }}
-                style={{
-                  width: '100%',
-                  height: '100%',
-                  objectFit: 'contain',
-                  backgroundColor: 'black',
-                  cursor: 'pointer',
-                  opacity: isAudio ? 0 : 1,
-                  pointerEvents: isAudio ? 'none' : 'auto',
-                  transition: 'opacity 0.35s ease',
-                }}
-              />
-              <MediaLoadingOverlay
-                visible={!isAudio && !!mediaLoadStates[index]?.isLoading}
-                percent={mediaLoadStates[index]?.loadedPercent}
-                label={mediaLoadStates[index]?.label}
-              />
+              {isXPost ? (
+                <XPostEmbed url={getCanonicalXPostUrl(vid.url)} />
+              ) : (
+                <>
+                  <video
+                    ref={(el) => (videoRefs.current[index] = el)}
+                    muted={muted}
+                    controls={false}
+                    playsInline
+                    preload="auto"
+                    crossOrigin="anonymous"
+                    onLoadStart={() => syncMediaLoadState(index, {
+                      isLoading: !isAudio,
+                      label: vid.url?.endsWith('.m3u8') ? 'Starting stream' : 'Loading',
+                    })}
+                    onLoadedMetadata={() => syncMediaLoadState(index, {
+                      isLoading: !isAudio,
+                      label: vid.url?.endsWith('.m3u8') ? 'Buffering stream' : 'Loading',
+                    })}
+                    onProgress={() => syncMediaLoadState(index)}
+                    onCanPlay={() => syncMediaLoadState(index, { isLoading: false, label: 'Ready' })}
+                    onPlaying={() => syncMediaLoadState(index, { isLoading: false, label: 'Playing' })}
+                    onWaiting={() => syncMediaLoadState(index, { isLoading: !isAudio, label: 'Buffering' })}
+                    onStalled={() => syncMediaLoadState(index, { isLoading: !isAudio, label: 'Buffering' })}
+                    onSeeking={() => syncMediaLoadState(index, { isLoading: !isAudio, label: 'Seeking' })}
+                    onSeeked={() => syncMediaLoadState(index, { isLoading: false, label: 'Ready' })}
+                    onError={() => syncMediaLoadState(index, { isLoading: false, label: 'Load error' })}
+                    onPlay={() => handlePlay(index)}
+                    onPause={() => handlePause(index)}
+                    onEnded={() => handleEnded(index)}
+                    onClick={() => {
+                      const v = videoRefs.current[index];
+                      if (v.paused) v.play();
+                      else v.pause();
+                    }}
+                    style={{
+                      width: '100%',
+                      height: '100%',
+                      objectFit: 'contain',
+                      backgroundColor: 'black',
+                      cursor: 'pointer',
+                      opacity: isAudio ? 0 : 1,
+                      pointerEvents: isAudio ? 'none' : 'auto',
+                      transition: 'opacity 0.35s ease',
+                    }}
+                  />
+                  <MediaLoadingOverlay
+                    visible={!isAudio && !!mediaLoadStates[index]?.isLoading}
+                    percent={mediaLoadStates[index]?.loadedPercent}
+                    label={mediaLoadStates[index]?.label}
+                  />
+                </>
+              )}
             </div>
 
             <img
@@ -1081,36 +1110,42 @@ export default function WatchMultiPage({ idOverride } = {}) {
 
             <div style={controlsBarStyle}>
               <div style={controlsRowStyle}>
+                {!isXPost && (
+                  <div style={controlsGroupStyle}>
+                    <div onClick={toggleMute} style={iconButtonStyle} title={muted ? 'Unmute' : 'Mute'}>
+                      {muted ? <FaVolumeMute size={18} /> : <FaVolumeUp size={18} />}
+                    </div>
+                    <input
+                      type="range"
+                      min="0"
+                      max="1"
+                      step="0.01"
+                      value={volume}
+                      onChange={handleVolumeChange}
+                      style={volumeSliderStyle}
+                      aria-label="Volume"
+                    />
+                  </div>
+                )}
                 <div style={controlsGroupStyle}>
-                  <div onClick={toggleMute} style={iconButtonStyle} title={muted ? 'Unmute' : 'Mute'}>
-                    {muted ? <FaVolumeMute size={18} /> : <FaVolumeUp size={18} />}
-                  </div>
-                  <input
-                    type="range"
-                    min="0"
-                    max="1"
-                    step="0.01"
-                    value={volume}
-                    onChange={handleVolumeChange}
-                    style={volumeSliderStyle}
-                    aria-label="Volume"
-                  />
-                </div>
-                <div style={controlsGroupStyle}>
-                  <div
-                    onClick={() => toggleLoop(index)}
-                    style={{ ...iconButtonStyle, ...(isLooping ? toggleActiveStyle : null) }}
-                    title={isLooping ? 'Disable Loop' : 'Enable Loop'}
-                  >
-                    <FaRedo size={16} color="#fff" />
-                  </div>
-                  <div
-                    onClick={toggleAutoPlayNext}
-                    style={{ ...iconButtonStyle, ...(autoPlayNext ? toggleActiveStyle : null) }}
-                    title={autoPlayNext ? 'Disable Auto-Play Next' : 'Enable Auto-Play Next'}
-                  >
-                    <FaStepForward size={16} color="#fff" />
-                  </div>
+                  {!isXPost && (
+                    <>
+                      <div
+                        onClick={() => toggleLoop(index)}
+                        style={{ ...iconButtonStyle, ...(isLooping ? toggleActiveStyle : null) }}
+                        title={isLooping ? 'Disable Loop' : 'Enable Loop'}
+                      >
+                        <FaRedo size={16} color="#fff" />
+                      </div>
+                      <div
+                        onClick={toggleAutoPlayNext}
+                        style={{ ...iconButtonStyle, ...(autoPlayNext ? toggleActiveStyle : null) }}
+                        title={autoPlayNext ? 'Disable Auto-Play Next' : 'Enable Auto-Play Next'}
+                      >
+                        <FaStepForward size={16} color="#fff" />
+                      </div>
+                    </>
+                  )}
                   <div
                     onClick={() => {
                       setShowInfo((prev) => !prev);
@@ -1124,7 +1159,11 @@ export default function WatchMultiPage({ idOverride } = {}) {
                   <div onClick={() => setShowQR(true)} style={iconButtonStyle} title="Share">
                     <FaQrcode size={18} />
                   </div>
-                  <div onClick={() => window.open(vid.url, '_blank')} style={iconButtonStyle} title="Download">
+                  <div
+                    onClick={() => window.open(isXPost ? getCanonicalXPostUrl(vid.url) : vid.url, '_blank')}
+                    style={iconButtonStyle}
+                    title={isXPost ? 'Open X Post' : 'Download'}
+                  >
                     <FaDownload size={18} />
                   </div>
                 </div>
@@ -1134,17 +1173,28 @@ export default function WatchMultiPage({ idOverride } = {}) {
                   type="button"
                   onClick={() => togglePlayback(index)}
                   style={seekButtonStyle}
-                  aria-label={isPlaying ? 'Pause' : 'Play'}
+                  aria-label={isXPost ? 'Next' : isPlaying ? 'Pause' : 'Play'}
                 >
-                  {isPlaying ? <FaPause size={16} color="#fff" /> : <FaPlay size={16} color="#fff" />}
+                  {isXPost ? <FaStepForward size={16} color="#fff" /> : isPlaying ? <FaPause size={16} color="#fff" /> : <FaPlay size={16} color="#fff" />}
                 </button>
-                <div ref={(el) => (seekTimeRefs.current[index] = el)} style={seekTimeStyle}>0:00</div>
-                <div onClick={(e) => handleSeek(e, index)} style={progressWrapperStyle}>
-                  <div style={progressTrackStyle}>
-                    <div ref={(el) => (progressRefs.current[index] = el)} style={progressFillStyle} />
+                {!isXPost && (
+                  <>
+                    <div ref={(el) => (seekTimeRefs.current[index] = el)} style={seekTimeStyle}>0:00</div>
+                    <div onClick={(e) => handleSeek(e, index)} style={progressWrapperStyle}>
+                      <div style={progressTrackStyle}>
+                        <div ref={(el) => (progressRefs.current[index] = el)} style={progressFillStyle} />
+                      </div>
+                    </div>
+                    <div ref={(el) => (seekDurationRefs.current[index] = el)} style={seekDurationStyle}>0:00</div>
+                  </>
+                )}
+                {isXPost && (
+                  <div style={progressWrapperStyle}>
+                    <div style={{ ...progressTrackStyle, opacity: 0.32 }}>
+                      <div style={{ ...progressFillStyle, width: '100%' }} />
+                    </div>
                   </div>
-                </div>
-                <div ref={(el) => (seekDurationRefs.current[index] = el)} style={seekDurationStyle}>0:00</div>
+                )}
               </div>
             </div>
           </div>
