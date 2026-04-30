@@ -14,6 +14,8 @@ import {
 } from 'react-icons/fa';
 import Hls from 'hls.js';
 import WaveSurfer from 'wavesurfer.js';
+import MediaLoadingOverlay from '../components/MediaLoadingOverlay';
+import { nextMediaLoadState } from '../utils/mediaLoading';
 
 export default function WatchMultiPage({ idOverride } = {}) {
   const params = useParams();
@@ -30,9 +32,12 @@ export default function WatchMultiPage({ idOverride } = {}) {
   const [playingStates, setPlayingStates] = useState({});
   const [loopStates, setLoopStates] = useState({});
   const [autoPlayNext, setAutoPlayNext] = useState(true);
+  const [mediaLoadStates, setMediaLoadStates] = useState({});
 
+  const feedRef = useRef(null);
   const videoRefs = useRef([]);
   const itemRefs = useRef([]);
+  const elasticShellRefs = useRef([]);
   const progressRefs = useRef([]);
   const waveformRefs = useRef([]);
   const wavesurferRefs = useRef([]);
@@ -45,6 +50,9 @@ export default function WatchMultiPage({ idOverride } = {}) {
   const hideTimerRef = useRef(null);
   const playingIndexRef = useRef(null);
   const playingIsAudioRef = useRef(false);
+  const elasticFrameRef = useRef(null);
+  const lastScrollTopRef = useRef(0);
+  const scrollIdleTimerRef = useRef(null);
 
   useEffect(() => {
     async function fetchAllVideos() {
@@ -105,6 +113,7 @@ export default function WatchMultiPage({ idOverride } = {}) {
   useEffect(() => {
     setPlayingStates({});
     setLoopStates({});
+    setMediaLoadStates({});
   }, [videoData]);
 
   useEffect(() => {
@@ -134,7 +143,17 @@ export default function WatchMultiPage({ idOverride } = {}) {
           hls.on(Hls.Events.ERROR, (event, data) => {
             if (data.fatal) {
               console.error(`HLS error on video ${index}:`, data);
+              syncMediaLoadState(index, { isLoading: false, label: 'Stream error' });
             }
+          });
+          hls.on(Hls.Events.MANIFEST_LOADING, () => {
+            syncMediaLoadState(index, { isLoading: true, label: 'Starting stream' });
+          });
+          hls.on(Hls.Events.FRAG_LOADING, () => {
+            syncMediaLoadState(index, { isLoading: true, label: 'Buffering' });
+          });
+          hls.on(Hls.Events.FRAG_BUFFERED, () => {
+            syncMediaLoadState(index, { isLoading: false, label: 'Streaming' });
           });
           hlsRefs.current[index] = hls;
         } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
@@ -298,6 +317,97 @@ export default function WatchMultiPage({ idOverride } = {}) {
     if (isVideoUrl(vid.url)) return false;
     return vid.type === 'audio';
   };
+
+  const syncMediaLoadState = (index, options = {}) => {
+    const media = videoRefs.current[index];
+    setMediaLoadStates((prev) => {
+      const current = prev[index] || {
+        isLoading: false,
+        loadedPercent: null,
+        label: 'Loading',
+      };
+      const next = nextMediaLoadState(media, {
+        isLoading: options.isLoading ?? current.isLoading,
+        label: options.label ?? current.label,
+        loadedPercent: current.loadedPercent,
+      });
+
+      if (
+        current.isLoading === next.isLoading &&
+        current.label === next.label &&
+        current.loadedPercent === next.loadedPercent
+      ) {
+        return prev;
+      }
+
+      return { ...prev, [index]: next };
+    });
+  };
+
+  useEffect(() => {
+    const scroller = feedRef.current;
+    if (!scroller) return undefined;
+    const audioItems = videoData.map((vid) => {
+      if (!vid) return false;
+      if (/\.(mp3|m4a|aac|wav|ogg|flac)(\?|#|$)/i.test(vid.url)) return true;
+      if (/\.(mp4|webm|mov|m4v|mkv)(\?|#|$)/i.test(vid.url)) return false;
+      return vid.type === 'audio';
+    });
+
+    const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+
+    const resetElasticity = () => {
+      elasticShellRefs.current.forEach((shell) => {
+        if (shell) shell.style.transform = 'translate3d(0, 0, 0) scale(1) rotateX(0deg)';
+      });
+    };
+
+    const updateElasticity = () => {
+      elasticFrameRef.current = null;
+      const viewportHeight = scroller.clientHeight || window.innerHeight || 1;
+      const scrollTop = scroller.scrollTop;
+      const velocity = scrollTop - lastScrollTopRef.current;
+      lastScrollTopRef.current = scrollTop;
+
+      elasticShellRefs.current.forEach((shell, index) => {
+        if (!shell || audioItems[index]) return;
+
+        const item = itemRefs.current[index];
+        if (!item) return;
+
+        const rect = item.getBoundingClientRect();
+        const midpoint = rect.top + rect.height / 2;
+        const distanceFromCenter = Math.abs((midpoint - viewportHeight / 2) / viewportHeight);
+        const influence = clamp(1 - distanceFromCenter * 1.35, 0, 1);
+        const pull = clamp(-velocity * 0.075 * influence, -22, 22);
+        const stretch = 1 + clamp(Math.abs(velocity) / viewportHeight, 0, 0.12) * 0.24 * influence;
+        const tilt = clamp(-velocity * 0.012 * influence, -1.4, 1.4);
+
+        shell.style.transform = `translate3d(0, ${pull.toFixed(2)}px, 0) scale(${stretch.toFixed(4)}) rotateX(${tilt.toFixed(2)}deg)`;
+      });
+
+      if (scrollIdleTimerRef.current) clearTimeout(scrollIdleTimerRef.current);
+      scrollIdleTimerRef.current = setTimeout(resetElasticity, 110);
+    };
+
+    const scheduleElasticity = () => {
+      if (elasticFrameRef.current) return;
+      elasticFrameRef.current = requestAnimationFrame(updateElasticity);
+    };
+
+    lastScrollTopRef.current = scroller.scrollTop;
+    scroller.addEventListener('scroll', scheduleElasticity, { passive: true });
+    window.addEventListener('resize', scheduleElasticity);
+    scheduleElasticity();
+
+    return () => {
+      scroller.removeEventListener('scroll', scheduleElasticity);
+      window.removeEventListener('resize', scheduleElasticity);
+      if (elasticFrameRef.current) cancelAnimationFrame(elasticFrameRef.current);
+      if (scrollIdleTimerRef.current) clearTimeout(scrollIdleTimerRef.current);
+      resetElasticity();
+    };
+  }, [videoData]);
 
   useEffect(() => {
     wavesurferRefs.current.forEach((wavesurfer) => {
@@ -605,6 +715,17 @@ export default function WatchMultiPage({ idOverride } = {}) {
     transition: 'width 0.1s linear',
   };
 
+  const mediaElasticShellStyle = {
+    position: 'absolute',
+    inset: 0,
+    overflow: 'hidden',
+    backgroundColor: 'black',
+    transform: 'translate3d(0, 0, 0) scale(1) rotateX(0deg)',
+    transformOrigin: 'center center',
+    transition: 'transform 0.22s cubic-bezier(0.22, 1, 0.36, 1)',
+    willChange: 'transform',
+  };
+
   const seekRowStyle = {
     display: 'flex',
     alignItems: 'center',
@@ -799,6 +920,7 @@ export default function WatchMultiPage({ idOverride } = {}) {
 
   return (
     <div
+      ref={feedRef}
       style={{
         height: '100vh',
         width: '100%',
@@ -825,34 +947,58 @@ export default function WatchMultiPage({ idOverride } = {}) {
               scrollSnapAlign: 'start',
               overflow: 'hidden',
               backgroundColor: 'black',
+              perspective: '900px',
             }}
           >
-            <video
-              ref={(el) => (videoRefs.current[index] = el)}
-              muted={muted}
-              controls={false}
-              playsInline
-              preload="auto"
-              crossOrigin="anonymous"
-              onPlay={() => handlePlay(index)}
-              onPause={() => handlePause(index)}
-              onEnded={() => handleEnded(index)}
-              onClick={() => {
-                const v = videoRefs.current[index];
-                if (v.paused) v.play();
-                else v.pause();
-              }}
-              style={{
-                width: '100%',
-                height: '100vh',
-                objectFit: 'contain',
-                backgroundColor: 'black',
-                cursor: 'pointer',
-                opacity: isAudio ? 0 : 1,
-                pointerEvents: isAudio ? 'none' : 'auto',
-                transition: 'opacity 0.35s ease',
-              }}
-            />
+            <div ref={(el) => (elasticShellRefs.current[index] = el)} style={mediaElasticShellStyle}>
+              <video
+                ref={(el) => (videoRefs.current[index] = el)}
+                muted={muted}
+                controls={false}
+                playsInline
+                preload="auto"
+                crossOrigin="anonymous"
+                onLoadStart={() => syncMediaLoadState(index, {
+                  isLoading: !isAudio,
+                  label: vid.url?.endsWith('.m3u8') ? 'Starting stream' : 'Loading',
+                })}
+                onLoadedMetadata={() => syncMediaLoadState(index, {
+                  isLoading: !isAudio,
+                  label: vid.url?.endsWith('.m3u8') ? 'Buffering stream' : 'Loading',
+                })}
+                onProgress={() => syncMediaLoadState(index)}
+                onCanPlay={() => syncMediaLoadState(index, { isLoading: false, label: 'Ready' })}
+                onPlaying={() => syncMediaLoadState(index, { isLoading: false, label: 'Playing' })}
+                onWaiting={() => syncMediaLoadState(index, { isLoading: !isAudio, label: 'Buffering' })}
+                onStalled={() => syncMediaLoadState(index, { isLoading: !isAudio, label: 'Buffering' })}
+                onSeeking={() => syncMediaLoadState(index, { isLoading: !isAudio, label: 'Seeking' })}
+                onSeeked={() => syncMediaLoadState(index, { isLoading: false, label: 'Ready' })}
+                onError={() => syncMediaLoadState(index, { isLoading: false, label: 'Load error' })}
+                onPlay={() => handlePlay(index)}
+                onPause={() => handlePause(index)}
+                onEnded={() => handleEnded(index)}
+                onClick={() => {
+                  const v = videoRefs.current[index];
+                  if (v.paused) v.play();
+                  else v.pause();
+                }}
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  objectFit: 'contain',
+                  backgroundColor: 'black',
+                  cursor: 'pointer',
+                  opacity: isAudio ? 0 : 1,
+                  pointerEvents: isAudio ? 'none' : 'auto',
+                  transition: 'opacity 0.35s ease',
+                }}
+              />
+              <MediaLoadingOverlay
+                visible={!isAudio && !!mediaLoadStates[index]?.isLoading}
+                percent={mediaLoadStates[index]?.loadedPercent}
+                label={mediaLoadStates[index]?.label}
+              />
+            </div>
 
             <img
               src="/nutrilink-logo.png"
