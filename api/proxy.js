@@ -86,7 +86,7 @@ export default async function handler(req, res) {
   let parsed;
   try {
     parsed = new URL(target);
-  } catch (err) {
+  } catch {
     res.status(400).json({ error: 'Invalid url parameter' });
     return;
   }
@@ -134,7 +134,7 @@ export default async function handler(req, res) {
     }
 
     Readable.fromWeb(upstream.body).pipe(res);
-  } catch (err) {
+  } catch {
     res.status(502).json({ error: 'Upstream fetch failed' });
   }
 }
