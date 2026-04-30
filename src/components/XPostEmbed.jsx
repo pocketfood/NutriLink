@@ -9,6 +9,11 @@ function loadXWidgets() {
   if (window.twttr?.widgets) return Promise.resolve(window.twttr);
 
   if (!widgetsPromise) {
+    const scriptSources = [
+      'https://platform.twitter.com/widgets.js',
+      'https://platform.x.com/widgets.js',
+    ];
+
     widgetsPromise = new Promise((resolve, reject) => {
       const existingScript = document.querySelector('script[data-nutrilink-x-widgets="true"]');
 
@@ -19,13 +24,25 @@ function loadXWidgets() {
 
       if (existingScript) return;
 
+      const appendScript = (index = 0) => {
+        if (index >= scriptSources.length) {
+          reject(new Error('Unable to load X embed player.'));
+          return;
+        }
+
       const script = document.createElement('script');
-      script.src = 'https://platform.x.com/widgets.js';
+        script.src = scriptSources[index];
       script.async = true;
       script.charset = 'utf-8';
       script.dataset.nutrilinkXWidgets = 'true';
-      script.onerror = () => reject(new Error('Unable to load X embed player.'));
+        script.onerror = () => {
+          script.remove();
+          appendScript(index + 1);
+        };
       document.body.appendChild(script);
+      };
+
+      appendScript();
     });
   }
 
