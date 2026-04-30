@@ -1,10 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import MediaLoadingOverlay from './MediaLoadingOverlay';
 import { getCanonicalXPostUrl, getXPostId } from '../utils/xPost';
 
 let widgetsPromise = null;
 const EMBED_TIMEOUT_MS = 9000;
-const WIDGET_RENDER_TIMEOUT_MS = 3500;
 
 function loadXWidgets() {
   if (typeof window === 'undefined') return Promise.reject(new Error('X embeds require a browser.'));
@@ -51,41 +50,6 @@ function loadXWidgets() {
   return widgetsPromise;
 }
 
-function waitForWidgetFrame(container) {
-  const existingFrame = container.querySelector('iframe');
-  if (existingFrame) return Promise.resolve(existingFrame);
-
-  return new Promise((resolve, reject) => {
-    const observer = new MutationObserver(() => {
-      const frame = container.querySelector('iframe');
-      if (!frame) return;
-
-      observer.disconnect();
-      window.clearTimeout(timer);
-      resolve(frame);
-    });
-
-    const timer = window.setTimeout(() => {
-      observer.disconnect();
-      reject(new Error('X widget did not render a frame.'));
-    }, WIDGET_RENDER_TIMEOUT_MS);
-
-    observer.observe(container, { childList: true, subtree: true });
-  });
-}
-
-async function fetchVideoOEmbedHtml(canonicalUrl, signal) {
-  const params = new URLSearchParams({ url: canonicalUrl });
-  const response = await fetch(`/api/x-oembed?${params.toString()}`, { signal });
-  const data = await response.json();
-
-  if (!response.ok || !data?.html || !data.html.includes('twitter-video')) {
-    throw new Error(data?.error || 'X video embed unavailable.');
-  }
-
-  return data.html;
-}
-
 function createTweetEmbed(twttr, postId, container) {
   return twttr.widgets
     .createTweet(postId, container, {
@@ -101,71 +65,37 @@ function createTweetEmbed(twttr, postId, container) {
     });
 }
 
-function createOEmbedVideo(twttr, container, canonicalUrl, signal) {
-  return fetchVideoOEmbedHtml(canonicalUrl, signal)
-    .then((html) => {
-      container.innerHTML = html;
-      return Promise.resolve(twttr.widgets.load(container));
-    })
-    .then(() => waitForWidgetFrame(container))
-    .then((element) => {
-      return { element, type: 'video' };
-    });
-}
-
-function createVideoEmbed(twttr, postId, container) {
-  if (typeof twttr.widgets.createVideo !== 'function') {
-    return Promise.reject(new Error('X video widget factory unavailable.'));
-  }
-
-  return twttr.widgets
-    .createVideo(postId, container, {
-      status: 'hidden',
-      lang: 'en',
-    })
-    .then((element) => {
-      if (!element) {
-        throw new Error('X video widget did not render.');
-      }
-      return { element, type: 'video' };
-    });
-}
-
-function createBestXEmbed(twttr, postId, container, canonicalUrl, signal) {
-  return createOEmbedVideo(twttr, container, canonicalUrl, signal).catch(() => {
-    container.innerHTML = '';
-    return createVideoEmbed(twttr, postId, container);
-  }).catch(() => {
-    container.innerHTML = '';
-    return createTweetEmbed(twttr, postId, container);
-  });
-}
-
-function stretchVideoWidget(element, container, type) {
-  if (type !== 'video') return;
-
-  const frame = element?.tagName === 'IFRAME' ? element : container.querySelector('iframe');
-  if (!frame) return;
-
-  frame.setAttribute('width', '100%');
-  frame.setAttribute('height', '100%');
-  frame.style.setProperty('position', 'absolute', 'important');
-  frame.style.setProperty('inset', '0', 'important');
-  frame.style.setProperty('width', '100%', 'important');
-  frame.style.setProperty('max-width', 'none', 'important');
-  frame.style.setProperty('height', '100%', 'important');
-  frame.style.setProperty('min-height', '100%', 'important');
-}
-
 export default function XPostEmbed({ url, onReady, onError }) {
+  const shellRef = useRef(null);
   const containerRef = useRef(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [widgetType, setWidgetType] = useState('post');
+  const [scale, setScale] = useState(1);
+
+  const fitEmbedToShell = useCallback(() => {
+    const shell = shellRef.current;
+    const container = containerRef.current;
+    const frame = container?.querySelector('iframe');
+    if (!shell || !container || !frame) return;
+
+    const shellRect = shell.getBoundingClientRect();
+    const frameWidth = frame.offsetWidth || frame.getBoundingClientRect().width;
+    const frameHeight = frame.offsetHeight || frame.getBoundingClientRect().height;
+    if (!frameWidth || !frameHeight) return;
+
+    const shellStyles = window.getComputedStyle(shell);
+    const horizontalPadding =
+      parseFloat(shellStyles.paddingLeft || '0') + parseFloat(shellStyles.paddingRight || '0');
+    const verticalPadding =
+      parseFloat(shellStyles.paddingTop || '0') + parseFloat(shellStyles.paddingBottom || '0');
+    const maxWidth = Math.max(260, shellRect.width - horizontalPadding - 16);
+    const maxHeight = Math.max(260, shellRect.height - verticalPadding - 16);
+    const nextScale = Math.min(1, maxWidth / frameWidth, maxHeight / frameHeight);
+    setScale(Number.isFinite(nextScale) ? Math.max(0.58, nextScale) : 1);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
-    const controller = new AbortController();
     const postId = getXPostId(url);
     const container = containerRef.current;
 
@@ -179,7 +109,7 @@ export default function XPostEmbed({ url, onReady, onError }) {
 
     setIsLoading(true);
     setError(null);
-    setWidgetType('post');
+    setScale(1);
     container.innerHTML = '';
 
     const timeout = window.setTimeout(() => {
@@ -191,23 +121,19 @@ export default function XPostEmbed({ url, onReady, onError }) {
 
     const clearEmbedTimeout = () => window.clearTimeout(timeout);
 
-    const canonicalUrl = getCanonicalXPostUrl(url);
-
     loadXWidgets()
-      .then((twttr) => createBestXEmbed(twttr, postId, container, canonicalUrl, controller.signal))
-      .then(({ element, type }) => {
+      .then((twttr) => createTweetEmbed(twttr, postId, container))
+      .then(({ element }) => {
         if (cancelled) return;
         clearEmbedTimeout();
         setIsLoading(false);
-        setWidgetType(type);
         if (!element) {
-          setError('This X video could not be embedded.');
+          setError('This X post could not be embedded.');
           if (onError) onError();
           return;
         }
-        stretchVideoWidget(element, container, type);
-        window.requestAnimationFrame(() => stretchVideoWidget(element, container, type));
-        window.setTimeout(() => stretchVideoWidget(element, container, type), 500);
+        window.requestAnimationFrame(fitEmbedToShell);
+        window.setTimeout(fitEmbedToShell, 500);
         if (onReady) onReady();
       })
       .catch(() => {
@@ -220,15 +146,23 @@ export default function XPostEmbed({ url, onReady, onError }) {
 
     return () => {
       cancelled = true;
-      controller.abort();
       clearEmbedTimeout();
       if (container) container.innerHTML = '';
     };
-  }, [url, onReady, onError]);
+  }, [url, onReady, onError, fitEmbedToShell]);
+
+  useEffect(() => {
+    window.addEventListener('resize', fitEmbedToShell);
+    return () => window.removeEventListener('resize', fitEmbedToShell);
+  }, [fitEmbedToShell]);
 
   return (
-    <div className="x-post-embed-shell">
-      <div ref={containerRef} className={`x-post-embed-target x-post-embed-target--${widgetType}`} />
+    <div ref={shellRef} className="x-post-embed-shell">
+      <div
+        ref={containerRef}
+        className="x-post-embed-target x-post-embed-target--post"
+        style={{ '--x-post-scale': String(scale) }}
+      />
       <MediaLoadingOverlay visible={isLoading} label="Loading X video" />
       {error && (
         <div className="x-post-embed-error">
