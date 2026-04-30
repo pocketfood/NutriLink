@@ -16,6 +16,8 @@ import {
 import WaveSurfer from 'wavesurfer.js';
 import Multitrack from 'wavesurfer-multitrack';
 import Hls from 'hls.js';
+import MediaLoadingOverlay from '../components/MediaLoadingOverlay';
+import { nextMediaLoadState } from '../utils/mediaLoading';
 
 const STUDIO_TRACK_COLORS = [
   { wave: 'rgba(127,176,255,0.7)', progress: '#4da2ff' },
@@ -39,6 +41,11 @@ export default function WatchPage({ idOverride } = {}) {
   const [studioDrawerOpen, setStudioDrawerOpen] = useState(false);
   const [needsUserStart, setNeedsUserStart] = useState(false);
   const [isCompactLayout, setIsCompactLayout] = useState(false);
+  const [mediaLoadState, setMediaLoadState] = useState({
+    isLoading: false,
+    loadedPercent: null,
+    label: 'Loading',
+  });
   const videoRef = useRef(null);
   const audioRef = useRef(null);
   const progressRef = useRef(null);
@@ -135,6 +142,15 @@ export default function WatchPage({ idOverride } = {}) {
       return navigator.userActivation.hasBeenActive;
     }
     return false;
+  };
+
+  const syncMediaLoadState = (options = {}) => {
+    const media = videoRef.current;
+    setMediaLoadState((current) => nextMediaLoadState(media, {
+      isLoading: options.isLoading ?? current.isLoading,
+      label: options.label ?? current.label,
+      loadedPercent: current.loadedPercent,
+    }));
   };
 
   const applyStudioVolumes = () => {
@@ -239,7 +255,19 @@ export default function WatchPage({ idOverride } = {}) {
           hls.loadSource(videoSrc);
           hls.attachMedia(video);
           hls.on(Hls.Events.ERROR, (event, data) => {
-            if (data.fatal) setError('Error loading video stream');
+            if (data.fatal) {
+              syncMediaLoadState({ isLoading: false, label: 'Stream error' });
+              setError('Error loading video stream');
+            }
+          });
+          hls.on(Hls.Events.MANIFEST_LOADING, () => {
+            syncMediaLoadState({ isLoading: !isAudioOnlyPlayback, label: 'Starting stream' });
+          });
+          hls.on(Hls.Events.FRAG_LOADING, () => {
+            syncMediaLoadState({ isLoading: !isAudioOnlyPlayback, label: 'Buffering' });
+          });
+          hls.on(Hls.Events.FRAG_BUFFERED, () => {
+            syncMediaLoadState({ isLoading: false, label: 'Streaming' });
           });
           hlsRef.current = hls;
         } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
@@ -261,7 +289,7 @@ export default function WatchPage({ idOverride } = {}) {
         hlsRef.current = null;
       }
     };
-  }, [videoData, audioSrc, videoSrc]);
+  }, [videoData, audioSrc, videoSrc, isAudioOnlyPlayback]);
 
   useEffect(() => {
     if (!useStudioPlayback || !studioWaveRef.current) {
@@ -1108,6 +1136,22 @@ export default function WatchPage({ idOverride } = {}) {
         crossOrigin="anonymous"
         onPlay={handlePlay}
         onPause={handlePause}
+        onLoadStart={() => syncMediaLoadState({
+          isLoading: !isAudioOnlyPlayback && !!videoSrc,
+          label: videoSrc?.endsWith('.m3u8') ? 'Starting stream' : 'Loading',
+        })}
+        onLoadedMetadata={() => syncMediaLoadState({
+          isLoading: !isAudioOnlyPlayback && !!videoSrc,
+          label: videoSrc?.endsWith('.m3u8') ? 'Buffering stream' : 'Loading',
+        })}
+        onProgress={() => syncMediaLoadState()}
+        onCanPlay={() => syncMediaLoadState({ isLoading: false, label: 'Ready' })}
+        onPlaying={() => syncMediaLoadState({ isLoading: false, label: 'Playing' })}
+        onWaiting={() => syncMediaLoadState({ isLoading: !isAudioOnlyPlayback && !!videoSrc, label: 'Buffering' })}
+        onStalled={() => syncMediaLoadState({ isLoading: !isAudioOnlyPlayback && !!videoSrc, label: 'Buffering' })}
+        onSeeking={() => syncMediaLoadState({ isLoading: !isAudioOnlyPlayback && !!videoSrc, label: 'Seeking' })}
+        onSeeked={() => syncMediaLoadState({ isLoading: false, label: 'Ready' })}
+        onError={() => syncMediaLoadState({ isLoading: false, label: 'Load error' })}
         onClick={togglePlayback}
         style={{
           width: '100%',
@@ -1118,6 +1162,11 @@ export default function WatchPage({ idOverride } = {}) {
           pointerEvents: isAudioOnlyPlayback ? 'none' : 'auto',
           transition: 'opacity 0.35s ease',
         }}
+      />
+      <MediaLoadingOverlay
+        visible={!isAudioOnlyPlayback && !!videoSrc && mediaLoadState.isLoading}
+        percent={mediaLoadState.loadedPercent}
+        label={mediaLoadState.label}
       />
 
       {showAudioWaveform && (
