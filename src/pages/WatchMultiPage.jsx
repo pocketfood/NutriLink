@@ -100,6 +100,8 @@ export default function WatchMultiPage({ idOverride } = {}) {
   const lastScrollTopRef = useRef(0);
   const scrollIdleTimerRef = useRef(null);
   const twitterRefreshAttemptedRefs = useRef({});
+  const handleVideoErrorRef = useRef(null);
+  const removeVideoAtRef = useRef(null);
 
   const applyResolvedTwitterVideo = useCallback((index, resolved) => {
     setVideoData((current) =>
@@ -233,6 +235,7 @@ export default function WatchMultiPage({ idOverride } = {}) {
             if (data.fatal) {
               console.error(`HLS error on video ${index}:`, data);
               syncMediaLoadState(index, { isLoading: false, label: 'Stream error' });
+              handleVideoErrorRef.current?.(index);
             }
           });
           hls.on(Hls.Events.MANIFEST_LOADING, () => {
@@ -281,7 +284,7 @@ export default function WatchMultiPage({ idOverride } = {}) {
         .catch(() => {
           if (cancelled) return;
           syncMediaLoadState(index, { isLoading: false, label: 'Load error' });
-          setError('An X/Twitter video could not be resolved. The post may be unavailable or may not include a playable video.');
+          removeVideoAtRef.current?.(index, 'No playable videos are available.');
         });
     });
 
@@ -630,11 +633,48 @@ export default function WatchMultiPage({ idOverride } = {}) {
     if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
   };
 
+  const removeVideoAt = (index, emptyMessage = 'No playable videos are available.') => {
+    const failedItem = videoData[index];
+    const failedVideo = videoRefs.current[index];
+    if (failedVideo) {
+      failedVideo.pause();
+      failedVideo.removeAttribute('src');
+      failedVideo.load();
+    }
+
+    setPlayingStates({});
+    setMediaLoadStates({});
+    setWaveErrors({});
+
+    setVideoData((current) => {
+      const next = failedItem
+        ? current.filter((item) => item !== failedItem)
+        : current.filter((item, itemIndex) => itemIndex !== index);
+
+      if (!next.length) {
+        setError(emptyMessage);
+        return [];
+      }
+
+      setError(null);
+      if (typeof window !== 'undefined') {
+        window.requestAnimationFrame(() => {
+          const nextIndex = Math.min(index, next.length - 1);
+          videoRefs.current[nextIndex]?.play().catch(() => {});
+        });
+      }
+      return next;
+    });
+  };
+
   const handleVideoError = (index) => {
     syncMediaLoadState(index, { isLoading: false, label: 'Load error' });
 
     const sourceUrl = getTwitterSourceUrl(videoData[index]);
-    if (!sourceUrl || twitterRefreshAttemptedRefs.current[index]) return;
+    if (!sourceUrl || twitterRefreshAttemptedRefs.current[index]) {
+      removeVideoAt(index, 'No playable videos are available.');
+      return;
+    }
 
     twitterRefreshAttemptedRefs.current[index] = true;
     syncMediaLoadState(index, { isLoading: true, label: 'Refreshing X video' });
@@ -646,9 +686,12 @@ export default function WatchMultiPage({ idOverride } = {}) {
       })
       .catch(() => {
         syncMediaLoadState(index, { isLoading: false, label: 'Load error' });
-        setError('An X/Twitter video could not be refreshed. The original post may be unavailable or may no longer expose a playable video.');
+        removeVideoAt(index, 'No playable videos are available.');
       });
   };
+
+  removeVideoAtRef.current = removeVideoAt;
+  handleVideoErrorRef.current = handleVideoError;
 
   const handleSeek = (e, index) => {
     const video = videoRefs.current[index];
@@ -1074,7 +1117,7 @@ export default function WatchMultiPage({ idOverride } = {}) {
         const displayDescription = getUserDisplayDescription(vid, isTwitter);
         return (
           <div
-            key={index}
+            key={`${vid.tweetId || vid.sourceUrl || vid.videoUrl || vid.url || 'media'}-${index}`}
             ref={(el) => (itemRefs.current[index] = el)}
             style={{
               position: 'relative',
