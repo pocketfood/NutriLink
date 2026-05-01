@@ -100,6 +100,41 @@ function isAllowedHost(targetUrl) {
   return ALLOWED_WILDCARD_SUFFIXES.some((suffix) => hostname.endsWith(suffix));
 }
 
+function isHlsPlaylistUrl(value) {
+  return /\.m3u8?$/i.test(value.pathname);
+}
+
+function isHlsPlaylistResponse(targetUrl, upstream) {
+  const contentType = upstream.headers.get('content-type') || '';
+  return isHlsPlaylistUrl(targetUrl) || /mpegurl|vnd\.apple\.mpegurl/i.test(contentType);
+}
+
+function toProxiedUrl(value, baseUrl) {
+  if (!value || /^(?:data|blob|about):/i.test(value)) return value;
+  try {
+    const absoluteUrl = new URL(value, baseUrl).toString();
+    return `/api/proxy?url=${encodeURIComponent(absoluteUrl)}`;
+  } catch {
+    return value;
+  }
+}
+
+function rewriteHlsPlaylist(playlist, baseUrl) {
+  return playlist
+    .split(/\r?\n/)
+    .map((line) => {
+      const trimmed = line.trim();
+      if (!trimmed || (trimmed.startsWith('#') && !/URI="/i.test(trimmed))) return line;
+
+      if (trimmed.startsWith('#')) {
+        return line.replace(/URI="([^"]+)"/gi, (match, uri) => `URI="${toProxiedUrl(uri, baseUrl)}"`);
+      }
+
+      return toProxiedUrl(trimmed, baseUrl);
+    })
+    .join('\n');
+}
+
 export default async function handler(req, res) {
   applyCors(res);
 
@@ -152,11 +187,10 @@ export default async function handler(req, res) {
       redirect: 'follow',
     });
 
-    res.status(upstream.status);
+    const shouldRewriteHls = req.method !== 'HEAD' && upstream.ok && isHlsPlaylistResponse(parsed, upstream);
 
     const passthroughHeaders = [
       'content-type',
-      'content-length',
       'content-range',
       'accept-ranges',
       'content-disposition',
@@ -170,10 +204,25 @@ export default async function handler(req, res) {
       if (value) res.setHeader(header, value);
     });
 
+    res.status(upstream.status);
+
     if (req.method === 'HEAD') {
+      const contentLength = upstream.headers.get('content-length');
+      if (contentLength) res.setHeader('content-length', contentLength);
       res.end();
       return;
     }
+
+    if (shouldRewriteHls) {
+      const rewrittenPlaylist = rewriteHlsPlaylist(await upstream.text(), upstream.url || parsed.toString());
+      res.setHeader('content-type', 'application/vnd.apple.mpegurl; charset=utf-8');
+      res.setHeader('content-length', Buffer.byteLength(rewrittenPlaylist));
+      res.end(rewrittenPlaylist);
+      return;
+    }
+
+    const contentLength = upstream.headers.get('content-length');
+    if (contentLength) res.setHeader('content-length', contentLength);
 
     if (!upstream.body) {
       res.status(502).json({ error: 'Upstream response missing body' });
