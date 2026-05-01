@@ -26,3 +26,18 @@ export function getCanonicalXPostUrl(value) {
   const id = getXPostId(value);
   return id ? `https://x.com/i/web/status/${id}` : value;
 }
+
+export async function resolveXVideo(value) {
+  const res = await fetch('/api/resolve-x', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url: value }),
+  });
+
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data.error || 'Unable to resolve X/Twitter video');
+  }
+
+  return data;
+}

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import QRCode from 'react-qr-code';
 import {
@@ -17,9 +17,8 @@ import WaveSurfer from 'wavesurfer.js';
 import Multitrack from 'wavesurfer-multitrack';
 import Hls from 'hls.js';
 import MediaLoadingOverlay from '../components/MediaLoadingOverlay';
-import XPostEmbed from '../components/XPostEmbed';
 import { nextMediaLoadState } from '../utils/mediaLoading';
-import { getCanonicalXPostUrl, isXPostUrl } from '../utils/xPost';
+import { isXPostUrl, resolveXVideo } from '../utils/xPost';
 
 const STUDIO_TRACK_COLORS = [
   { wave: 'rgba(127,176,255,0.7)', progress: '#4da2ff' },
@@ -80,6 +79,7 @@ export default function WatchPage({ idOverride } = {}) {
   const hideTimerRef = useRef(null);
   const playingRef = useRef(false);
   const userGestureRef = useRef(false);
+  const twitterRefreshAttemptedRef = useRef(false);
 
   const isAudioUrl = (value) => {
     if (!value) return false;
@@ -184,22 +184,50 @@ export default function WatchPage({ idOverride } = {}) {
       ? videoData.videos
       : [];
   const useStudioPlayback = studioTracks.length > 0;
+  const isTwitterVideo =
+    !useStudioPlayback &&
+    videoData &&
+    (videoData.type === 'twitter' || isXPostUrl(videoData.sourceUrl) || isXPostUrl(videoData.url));
+  const twitterSourceUrl = isTwitterVideo
+    ? videoData.sourceUrl || (isXPostUrl(videoData.url) ? videoData.url : null)
+    : null;
   const hasStudioVideo = Boolean(videoData?.videoUrl);
   const mixUrl = useStudioPlayback
     ? null
     : videoData?.mixUrl || (videoData?.type === 'studio' && isAudioUrl(videoData?.url) ? videoData.url : null);
+  const storedMediaUrl = hasStudioVideo ? videoData?.videoUrl : videoData?.url;
+  const playableMediaUrl = isTwitterVideo && isXPostUrl(storedMediaUrl) ? null : storedMediaUrl;
   const isAudioContent =
     !useStudioPlayback && videoData && !hasStudioVideo && (videoData.type === 'audio' || isAudioUrl(videoData.url));
-  const isXPostPlayback = !useStudioPlayback && !hasStudioVideo && !mixUrl && isXPostUrl(videoData?.url);
   const isAudioOnlyPlayback = isAudioContent || (useStudioPlayback && !hasStudioVideo);
   const showAudioWaveform = isAudioContent;
   const showStudioDrawer = useStudioPlayback;
-  const xPostUrl = isXPostPlayback ? getCanonicalXPostUrl(videoData.url) : null;
-  const mediaSrc = videoData?.url && !isXPostPlayback ? getMediaProxyUrl(videoData.url) : null;
+  const mediaSrc = playableMediaUrl ? getMediaProxyUrl(playableMediaUrl) : null;
   const audioSrc = mixUrl ? getMediaProxyUrl(mixUrl) : isAudioContent ? mediaSrc : null;
-  const videoSrc = isXPostPlayback ? null : hasStudioVideo ? getMediaProxyUrl(videoData.videoUrl) : mixUrl ? null : mediaSrc;
+  const videoSrc = hasStudioVideo ? getMediaProxyUrl(videoData.videoUrl) : mixUrl ? null : mediaSrc;
   const primaryMediaRef = mixUrl ? audioRef : videoRef;
-  const downloadUrl = xPostUrl || mixUrl || videoData?.url || videoData?.videoUrl;
+  const downloadUrl = mixUrl || videoData?.videoUrl || (isXPostUrl(videoData?.url) ? null : videoData?.url) || twitterSourceUrl;
+
+  const applyResolvedTwitterVideo = useCallback((resolved) => {
+    setVideoData((current) => ({
+      ...current,
+      type: 'twitter',
+      source: resolved.source,
+      sourceUrl: resolved.sourceUrl || current?.sourceUrl,
+      tweetId: resolved.tweetId,
+      url: resolved.videoUrl,
+      videoUrl: resolved.videoUrl,
+      poster: resolved.poster,
+      width: resolved.width,
+      height: resolved.height,
+      durationMs: resolved.durationMs,
+      username: resolved.username,
+      name: resolved.name,
+      profileImage: resolved.profileImage,
+      description: resolved.description || current?.description || '',
+      possiblySensitive: resolved.possiblySensitive,
+    }));
+  }, []);
 
   useEffect(() => {
     async function fetchVideo() {
@@ -214,6 +242,7 @@ export default function WatchPage({ idOverride } = {}) {
         );
         if (!res.ok) throw new Error('Video not found or expired');
         const data = await res.json();
+        twitterRefreshAttemptedRef.current = false;
         setVideoData(data);
         setError(null);
         setLoopEnabled(Boolean(data.loop ?? data.loopEnabled));
@@ -243,6 +272,30 @@ export default function WatchPage({ idOverride } = {}) {
   useEffect(() => {
     if (!useStudioPlayback) setStudioDrawerOpen(false);
   }, [useStudioPlayback]);
+
+  useEffect(() => {
+    if (!videoData || !isTwitterVideo || videoSrc || !twitterSourceUrl) return undefined;
+
+    let cancelled = false;
+    setMediaLoadState({ isLoading: true, loadedPercent: null, label: 'Resolving X video' });
+
+    resolveXVideo(twitterSourceUrl)
+      .then((resolved) => {
+        if (cancelled) return;
+        twitterRefreshAttemptedRef.current = false;
+        applyResolvedTwitterVideo(resolved);
+        setError(null);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setMediaLoadState({ isLoading: false, loadedPercent: null, label: 'Load error' });
+        setError('This X/Twitter video could not be resolved. The post may be unavailable or may not include a playable video.');
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [videoData, isTwitterVideo, videoSrc, twitterSourceUrl, applyResolvedTwitterVideo]);
 
   useEffect(() => {
     if (!videoData) return;
@@ -656,8 +709,26 @@ export default function WatchPage({ idOverride } = {}) {
     if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
   };
 
+  const handleVideoError = () => {
+    syncMediaLoadState({ isLoading: false, label: 'Load error' });
+
+    if (!isTwitterVideo || !twitterSourceUrl || twitterRefreshAttemptedRef.current) return;
+
+    twitterRefreshAttemptedRef.current = true;
+    setMediaLoadState({ isLoading: true, loadedPercent: null, label: 'Refreshing X video' });
+
+    resolveXVideo(twitterSourceUrl)
+      .then((resolved) => {
+        applyResolvedTwitterVideo(resolved);
+        setError(null);
+      })
+      .catch(() => {
+        setMediaLoadState({ isLoading: false, loadedPercent: null, label: 'Load error' });
+        setError('This X/Twitter video could not be refreshed. The original post may be unavailable or may no longer expose a playable video.');
+      });
+  };
+
   const toggleMute = () => {
-    if (isXPostPlayback) return;
     setMuted((prev) => {
       const next = !prev;
       if (!useStudioPlayback) {
@@ -669,13 +740,11 @@ export default function WatchPage({ idOverride } = {}) {
   };
 
   const toggleLoop = () => {
-    if (isXPostPlayback) return;
     setLoopEnabled((prev) => !prev);
     studioLoopArmedRef.current = false;
   };
 
   const handleSeek = (e) => {
-    if (isXPostPlayback) return;
     const bar = e.currentTarget;
     const rect = bar.getBoundingClientRect();
     const x = e.clientX - rect.left;
@@ -700,10 +769,6 @@ export default function WatchPage({ idOverride } = {}) {
 
   const togglePlayback = () => {
     registerUserGesture();
-    if (isXPostPlayback) {
-      if (downloadUrl) window.open(downloadUrl, '_blank');
-      return;
-    }
     if (useStudioPlayback && studioRef.current) {
       const multitrack = studioRef.current;
       if (multitrack.isPlaying()) {
@@ -1150,53 +1215,50 @@ export default function WatchPage({ idOverride } = {}) {
           style={{ display: 'none' }}
         />
       )}
-      {isXPostPlayback ? (
-        <XPostEmbed url={xPostUrl} />
-      ) : (
-        <>
-          <video
-            ref={videoRef}
-            autoPlay={!useStudioPlayback}
-            controls={false}
-            playsInline
-            preload="auto"
-            crossOrigin="anonymous"
-            onPlay={handlePlay}
-            onPause={handlePause}
-            onLoadStart={() => syncMediaLoadState({
-              isLoading: !isAudioOnlyPlayback && !!videoSrc,
-              label: videoSrc?.endsWith('.m3u8') ? 'Starting stream' : 'Loading',
-            })}
-            onLoadedMetadata={() => syncMediaLoadState({
-              isLoading: !isAudioOnlyPlayback && !!videoSrc,
-              label: videoSrc?.endsWith('.m3u8') ? 'Buffering stream' : 'Loading',
-            })}
-            onProgress={() => syncMediaLoadState()}
-            onCanPlay={() => syncMediaLoadState({ isLoading: false, label: 'Ready' })}
-            onPlaying={() => syncMediaLoadState({ isLoading: false, label: 'Playing' })}
-            onWaiting={() => syncMediaLoadState({ isLoading: !isAudioOnlyPlayback && !!videoSrc, label: 'Buffering' })}
-            onStalled={() => syncMediaLoadState({ isLoading: !isAudioOnlyPlayback && !!videoSrc, label: 'Buffering' })}
-            onSeeking={() => syncMediaLoadState({ isLoading: !isAudioOnlyPlayback && !!videoSrc, label: 'Seeking' })}
-            onSeeked={() => syncMediaLoadState({ isLoading: false, label: 'Ready' })}
-            onError={() => syncMediaLoadState({ isLoading: false, label: 'Load error' })}
-            onClick={togglePlayback}
-            style={{
-              width: '100%',
-              height: '100vh',
-              objectFit: 'contain',
-              cursor: 'pointer',
-              opacity: isAudioOnlyPlayback ? 0 : 1,
-              pointerEvents: isAudioOnlyPlayback ? 'none' : 'auto',
-              transition: 'opacity 0.35s ease',
-            }}
-          />
-          <MediaLoadingOverlay
-            visible={!isAudioOnlyPlayback && !!videoSrc && mediaLoadState.isLoading}
-            percent={mediaLoadState.loadedPercent}
-            label={mediaLoadState.label}
-          />
-        </>
-      )}
+      <>
+        <video
+          ref={videoRef}
+          autoPlay={!useStudioPlayback}
+          controls={false}
+          playsInline
+          preload="auto"
+          crossOrigin="anonymous"
+          poster={videoData.poster || undefined}
+          onPlay={handlePlay}
+          onPause={handlePause}
+          onLoadStart={() => syncMediaLoadState({
+            isLoading: !isAudioOnlyPlayback && !!videoSrc,
+            label: videoSrc?.endsWith('.m3u8') ? 'Starting stream' : 'Loading',
+          })}
+          onLoadedMetadata={() => syncMediaLoadState({
+            isLoading: !isAudioOnlyPlayback && !!videoSrc,
+            label: videoSrc?.endsWith('.m3u8') ? 'Buffering stream' : 'Loading',
+          })}
+          onProgress={() => syncMediaLoadState()}
+          onCanPlay={() => syncMediaLoadState({ isLoading: false, label: 'Ready' })}
+          onPlaying={() => syncMediaLoadState({ isLoading: false, label: 'Playing' })}
+          onWaiting={() => syncMediaLoadState({ isLoading: !isAudioOnlyPlayback && !!videoSrc, label: 'Buffering' })}
+          onStalled={() => syncMediaLoadState({ isLoading: !isAudioOnlyPlayback && !!videoSrc, label: 'Buffering' })}
+          onSeeking={() => syncMediaLoadState({ isLoading: !isAudioOnlyPlayback && !!videoSrc, label: 'Seeking' })}
+          onSeeked={() => syncMediaLoadState({ isLoading: false, label: 'Ready' })}
+          onError={handleVideoError}
+          onClick={togglePlayback}
+          style={{
+            width: '100%',
+            height: '100vh',
+            objectFit: 'contain',
+            cursor: 'pointer',
+            opacity: isAudioOnlyPlayback ? 0 : 1,
+            pointerEvents: isAudioOnlyPlayback ? 'none' : 'auto',
+            transition: 'opacity 0.35s ease',
+          }}
+        />
+        <MediaLoadingOverlay
+          visible={!isAudioOnlyPlayback && (Boolean(videoSrc) || isTwitterVideo) && mediaLoadState.isLoading}
+          percent={mediaLoadState.loadedPercent}
+          label={mediaLoadState.label}
+        />
+      </>
 
       {showAudioWaveform && (
         <div style={audioWaveWrapStyle}>
@@ -1270,14 +1332,33 @@ export default function WatchPage({ idOverride } = {}) {
             <div style={{ marginTop: '0.35rem', color: '#cfe2ff' }}>{videoData.description}</div>
           )}
           <div style={{ marginTop: '0.6rem', fontSize: '0.82rem', color: '#d6e5ff' }}>
+            {isTwitterVideo ? (
+              <>
+                <div style={{ marginBottom: '0.35rem' }}>
+                  <span style={{ fontWeight: 600 }}>Source:</span> X/Twitter
+                </div>
+                {(videoData.username || videoData.name) && (
+                  <div style={{ marginBottom: '0.35rem' }}>
+                    <span style={{ fontWeight: 600 }}>Author:</span>{' '}
+                    {videoData.username ? `@${videoData.username}` : videoData.name}
+                  </div>
+                )}
+              </>
+            ) : (
+              <div style={{ marginBottom: '0.35rem' }}>
+                <span style={{ fontWeight: 600 }}>Author:</span> {videoData.author || 'Anonymous'}
+              </div>
+            )}
             <div style={{ marginBottom: '0.35rem' }}>
-              <span style={{ fontWeight: 600 }}>Author:</span> {videoData.author || 'Anonymous'}
-            </div>
-            <div style={{ marginBottom: '0.35rem' }}>
-              <span style={{ fontWeight: 600 }}>Link:</span>{' '}
-              {videoData.url ? (
-                <a href={videoData.url} target="_blank" rel="noreferrer" style={infoLinkStyle}>
-                  {videoData.url}
+              <span style={{ fontWeight: 600 }}>{isTwitterVideo ? 'Original post:' : 'Link:'}</span>{' '}
+              {(isTwitterVideo ? twitterSourceUrl : videoData.url) ? (
+                <a
+                  href={isTwitterVideo ? twitterSourceUrl : videoData.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  style={infoLinkStyle}
+                >
+                  {isTwitterVideo ? twitterSourceUrl : videoData.url}
                 </a>
               ) : (
                 'Unavailable'
@@ -1292,7 +1373,6 @@ export default function WatchPage({ idOverride } = {}) {
 
       <div style={controlsBarStyle}>
         <div style={controlsRowStyle}>
-          {!isXPostPlayback && (
           <div style={controlsGroupStyle}>
             <div onClick={toggleMute} style={iconButtonStyle} title={muted ? 'Unmute' : 'Mute'}>
               {muted ? <FaVolumeMute size={18} /> : <FaVolumeUp size={18} />}
@@ -1308,17 +1388,14 @@ export default function WatchPage({ idOverride } = {}) {
               aria-label="Volume"
             />
           </div>
-          )}
           <div style={controlsGroupStyle}>
-            {!isXPostPlayback && (
-              <div
-                onClick={toggleLoop}
-                style={{ ...iconButtonStyle, ...(loopEnabled ? toggleActiveStyle : null) }}
-                title={loopEnabled ? 'Disable Loop' : 'Enable Loop'}
-              >
-                <FaRedo size={16} color="#fff" />
-              </div>
-            )}
+            <div
+              onClick={toggleLoop}
+              style={{ ...iconButtonStyle, ...(loopEnabled ? toggleActiveStyle : null) }}
+              title={loopEnabled ? 'Disable Loop' : 'Enable Loop'}
+            >
+              <FaRedo size={16} color="#fff" />
+            </div>
             {showStudioDrawer && (
               <div
                 onClick={() => setStudioDrawerOpen((prev) => !prev)}
@@ -1350,7 +1427,6 @@ export default function WatchPage({ idOverride } = {}) {
         {needsUserStart && useStudioPlayback && (
           <div style={autoplayNoticeStyle}>Tap Play to start audio (browser policy).</div>
         )}
-        {!isXPostPlayback && (
         <div style={seekRowStyle}>
           <button
             type="button"
@@ -1368,7 +1444,6 @@ export default function WatchPage({ idOverride } = {}) {
           </div>
           <div ref={seekDurationRef} style={seekDurationStyle}>0:00</div>
         </div>
-        )}
       </div>
 
       <div style={titleBlockStyle}>
@@ -1377,7 +1452,6 @@ export default function WatchPage({ idOverride } = {}) {
           <p style={{ margin: '0.5rem 0 0', fontSize: '0.9rem', color: '#ccc' }}>{videoData.description}</p>
         )}
       </div>
-
       {showQR && (
         <div
           onClick={() => setShowQR(false)}

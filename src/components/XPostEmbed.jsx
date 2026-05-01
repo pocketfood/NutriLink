@@ -4,16 +4,21 @@ import { getCanonicalXPostUrl, getXPostId } from '../utils/xPost';
 
 let widgetsPromise = null;
 const EMBED_TIMEOUT_MS = 9000;
+const X_WIDGET_SCRIPT_SOURCES = [
+  'https://platform.twitter.com/widgets.js',
+  'https://platform.x.com/widgets.js',
+];
+
+function getProxyUrl(value) {
+  return `/api/proxy?url=${encodeURIComponent(value)}`;
+}
 
 function loadXWidgets() {
   if (typeof window === 'undefined') return Promise.reject(new Error('X embeds require a browser.'));
   if (window.twttr?.widgets) return Promise.resolve(window.twttr);
 
   if (!widgetsPromise) {
-    const scriptSources = [
-      'https://platform.twitter.com/widgets.js',
-      'https://platform.x.com/widgets.js',
-    ];
+    const scriptSources = X_WIDGET_SCRIPT_SOURCES.flatMap((source) => [getProxyUrl(source), source]);
 
     widgetsPromise = new Promise((resolve, reject) => {
       const existingScript = document.querySelector('script[data-nutrilink-x-widgets="true"]');
@@ -65,9 +70,10 @@ function createTweetEmbed(twttr, postId, container) {
     });
 }
 
-export default function XPostEmbed({ url, onReady, onError }) {
+export default function XPostEmbed({ url, onReady, onError, onScrollIntent }) {
   const shellRef = useRef(null);
   const containerRef = useRef(null);
+  const touchStartYRef = useRef(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
   const [scale, setScale] = useState(1);
@@ -82,6 +88,9 @@ export default function XPostEmbed({ url, onReady, onError }) {
     const frameWidth = frame.offsetWidth || frame.getBoundingClientRect().width;
     const frameHeight = frame.offsetHeight || frame.getBoundingClientRect().height;
     if (!frameWidth || !frameHeight) return;
+
+    frame.setAttribute('scrolling', 'no');
+    frame.style.setProperty('overflow', 'hidden', 'important');
 
     const shellStyles = window.getComputedStyle(shell);
     const horizontalPadding =
@@ -156,8 +165,33 @@ export default function XPostEmbed({ url, onReady, onError }) {
     return () => window.removeEventListener('resize', fitEmbedToShell);
   }, [fitEmbedToShell]);
 
+  const handleWheel = (event) => {
+    if (!onScrollIntent || Math.abs(event.deltaY) < 1) return;
+    onScrollIntent(event.deltaY);
+  };
+
+  const handleTouchStart = (event) => {
+    touchStartYRef.current = event.touches?.[0]?.clientY ?? null;
+  };
+
+  const handleTouchMove = (event) => {
+    if (!onScrollIntent || touchStartYRef.current === null) return;
+    const currentY = event.touches?.[0]?.clientY;
+    if (typeof currentY !== 'number') return;
+    const deltaY = touchStartYRef.current - currentY;
+    if (Math.abs(deltaY) < 8) return;
+    touchStartYRef.current = currentY;
+    onScrollIntent(deltaY);
+  };
+
   return (
-    <div ref={shellRef} className="x-post-embed-shell">
+    <div
+      ref={shellRef}
+      className="x-post-embed-shell"
+      onWheel={handleWheel}
+      onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
+    >
       <div
         ref={containerRef}
         className="x-post-embed-target x-post-embed-target--post"

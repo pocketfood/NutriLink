@@ -2,6 +2,8 @@ export const config = {
   runtime: 'nodejs',
 };
 
+import { Buffer } from 'node:buffer';
+
 const BLOCKED_HOSTNAMES = new Set(['localhost', '127.0.0.1', '0.0.0.0', '::1']);
 
 const setCorsHeaders = (res) => {
@@ -35,7 +37,7 @@ export default async function handler(req, res) {
   let parsed;
   try {
     parsed = new URL(targetUrl);
-  } catch (err) {
+  } catch {
     return res.status(400).json({ error: 'Invalid url' });
   }
 

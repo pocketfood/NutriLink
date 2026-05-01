@@ -9,10 +9,29 @@ const ALLOWED_ORIGIN =
     ? process.env.APP_ORIGIN || 'https://app.example'
     : '*';
 
-const allowedHostEntries = (process.env.AUDIO_PROXY_ALLOWED_HOSTS || '')
+const defaultAllowedHostEntries = [
+  'platform.twitter.com',
+  'platform.x.com',
+  'publish.twitter.com',
+  'publish.x.com',
+  'syndication.twitter.com',
+  'syndication.x.com',
+  'cdn.syndication.twimg.com',
+  'pbs.twimg.com',
+  'video.twimg.com',
+  'x.com',
+  'www.x.com',
+  'twitter.com',
+  'www.twitter.com',
+  'mobile.twitter.com',
+];
+
+const configuredAllowedHostEntries = (process.env.AUDIO_PROXY_ALLOWED_HOSTS || '')
   .split(',')
   .map((host) => host.trim())
-  .filter(Boolean)
+  .filter(Boolean);
+
+const allowedHostEntries = [...defaultAllowedHostEntries, ...configuredAllowedHostEntries]
   .map((host) => {
     if (/^https?:\/\//i.test(host)) {
       try {

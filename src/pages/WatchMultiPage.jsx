@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react';
+import { useCallback, useEffect, useState, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import QRCode from 'react-qr-code';
 import {
@@ -15,9 +15,8 @@ import {
 import Hls from 'hls.js';
 import WaveSurfer from 'wavesurfer.js';
 import MediaLoadingOverlay from '../components/MediaLoadingOverlay';
-import XPostEmbed from '../components/XPostEmbed';
 import { nextMediaLoadState } from '../utils/mediaLoading';
-import { getCanonicalXPostUrl, isXPostUrl } from '../utils/xPost';
+import { isXPostUrl, resolveXVideo } from '../utils/xPost';
 
 function formatClockTime(seconds = 0) {
   const safeSeconds = Math.max(0, Math.round(seconds));
@@ -29,6 +28,38 @@ function formatClockTime(seconds = 0) {
 function formatTimeLeft(duration = 0, currentTime = 0) {
   if (!Number.isFinite(duration) || duration <= 0) return '0:00 left';
   return `${formatClockTime(duration - currentTime)} left`;
+}
+
+function getTwitterSourceUrl(vid) {
+  if (!vid || (vid.type !== 'twitter' && !isXPostUrl(vid.sourceUrl) && !isXPostUrl(vid.url))) return null;
+  return vid.sourceUrl || (isXPostUrl(vid.url) ? vid.url : null);
+}
+
+function isTwitterItem(vid) {
+  return Boolean(getTwitterSourceUrl(vid));
+}
+
+function getPlayableMediaUrl(vid) {
+  const mediaUrl = vid?.videoUrl || vid?.url;
+  return isTwitterItem(vid) && isXPostUrl(mediaUrl) ? null : mediaUrl;
+}
+
+function isAudioUrl(value) {
+  if (!value) return false;
+  return /\.(mp3|m4a|aac|wav|ogg|flac)(\?|#|$)/i.test(value);
+}
+
+function isVideoUrl(value) {
+  if (!value) return false;
+  return /\.(mp4|webm|mov|m4v|mkv)(\?|#|$)/i.test(value);
+}
+
+function isAudioItem(vid) {
+  if (!vid) return false;
+  const mediaUrl = getPlayableMediaUrl(vid);
+  if (isAudioUrl(mediaUrl)) return true;
+  if (isVideoUrl(mediaUrl)) return false;
+  return vid.type === 'audio';
 }
 
 export default function WatchMultiPage({ idOverride } = {}) {
@@ -67,7 +98,34 @@ export default function WatchMultiPage({ idOverride } = {}) {
   const elasticFrameRef = useRef(null);
   const lastScrollTopRef = useRef(0);
   const scrollIdleTimerRef = useRef(null);
-  const xScrollLockRef = useRef(false);
+  const twitterRefreshAttemptedRefs = useRef({});
+
+  const applyResolvedTwitterVideo = useCallback((index, resolved) => {
+    setVideoData((current) =>
+      current.map((item, itemIndex) =>
+        itemIndex === index
+          ? {
+              ...item,
+              type: 'twitter',
+              source: resolved.source,
+              sourceUrl: resolved.sourceUrl || item.sourceUrl,
+              tweetId: resolved.tweetId,
+              url: resolved.videoUrl,
+              videoUrl: resolved.videoUrl,
+              poster: resolved.poster,
+              width: resolved.width,
+              height: resolved.height,
+              durationMs: resolved.durationMs,
+              username: resolved.username,
+              name: resolved.name,
+              profileImage: resolved.profileImage,
+              description: resolved.description || item.description || '',
+              possiblySensitive: resolved.possiblySensitive,
+            }
+          : item
+      )
+    );
+  }, []);
 
   useEffect(() => {
     async function fetchAllVideos() {
@@ -108,6 +166,7 @@ export default function WatchMultiPage({ idOverride } = {}) {
         );
 
         const flatList = blobs.flat().filter((vid) => vid && vid.url);
+        twitterRefreshAttemptedRefs.current = {};
         setVideoData(flatList);
 
         if (flatList.length > 0) {
@@ -139,18 +198,20 @@ export default function WatchMultiPage({ idOverride } = {}) {
 
     videoRefs.current.forEach((video, index) => {
       const vid = videoData[index];
-      if (!video || !vid || !vid.url) return;
-      if (isXPostUrl(vid.url)) {
-        video.removeAttribute('src');
-        video.load();
+      const mediaUrl = getPlayableMediaUrl(vid);
+      if (!video || !vid || !mediaUrl) {
+        if (video) {
+          video.removeAttribute('src');
+          video.load();
+        }
         return;
       }
 
-      const mediaSrc = getMediaProxyUrl(vid.url);
+      const mediaSrc = getMediaProxyUrl(mediaUrl);
 
       if (isAudioItem(vid)) {
         if (mediaSrc) video.src = mediaSrc;
-      } else if (vid.url.endsWith('.m3u8')) {
+      } else if (mediaUrl.endsWith('.m3u8')) {
         if (Hls.isSupported()) {
           const hls = new Hls({
             xhrSetup: (xhr, url) => {
@@ -158,7 +219,7 @@ export default function WatchMultiPage({ idOverride } = {}) {
             },
             fetchSetup: (context, init) => new Request(getMediaProxyUrl(context.url), init),
           });
-          hls.loadSource(vid.url);
+          hls.loadSource(mediaUrl);
           hls.attachMedia(video);
           hls.on(Hls.Events.ERROR, (event, data) => {
             if (data.fatal) {
@@ -177,7 +238,7 @@ export default function WatchMultiPage({ idOverride } = {}) {
           });
           hlsRefs.current[index] = hls;
         } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-          video.src = vid.url;
+          video.src = mediaUrl;
         } else {
           console.error('HLS not supported on this browser');
         }
@@ -194,6 +255,32 @@ export default function WatchMultiPage({ idOverride } = {}) {
       hlsRefs.current = [];
     };
   }, [videoData]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    videoData.forEach((vid, index) => {
+      const sourceUrl = getTwitterSourceUrl(vid);
+      if (!sourceUrl || getPlayableMediaUrl(vid)) return;
+
+      syncMediaLoadState(index, { isLoading: true, label: 'Resolving X video' });
+      resolveXVideo(sourceUrl)
+        .then((resolved) => {
+          if (cancelled) return;
+          twitterRefreshAttemptedRefs.current[index] = false;
+          applyResolvedTwitterVideo(index, resolved);
+        })
+        .catch(() => {
+          if (cancelled) return;
+          syncMediaLoadState(index, { isLoading: false, label: 'Load error' });
+          setError('An X/Twitter video could not be resolved. The post may be unavailable or may not include a playable video.');
+        });
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [videoData, applyResolvedTwitterVideo]);
 
   useEffect(() => {
     videoRefs.current.forEach((video) => {
@@ -321,23 +408,6 @@ export default function WatchMultiPage({ idOverride } = {}) {
     return { waveColor: gradient, progressColor: progressGradient };
   };
 
-  const isAudioUrl = (value) => {
-    if (!value) return false;
-    return /\.(mp3|m4a|aac|wav|ogg|flac)(\?|#|$)/i.test(value);
-  };
-
-  const isVideoUrl = (value) => {
-    if (!value) return false;
-    return /\.(mp4|webm|mov|m4v|mkv)(\?|#|$)/i.test(value);
-  };
-
-  const isAudioItem = (vid) => {
-    if (!vid) return false;
-    if (isAudioUrl(vid.url)) return true;
-    if (isVideoUrl(vid.url)) return false;
-    return vid.type === 'audio';
-  };
-
   const syncMediaLoadState = (index, options = {}) => {
     const media = videoRefs.current[index];
     setMediaLoadStates((prev) => {
@@ -369,8 +439,9 @@ export default function WatchMultiPage({ idOverride } = {}) {
     if (!scroller) return undefined;
     const audioItems = videoData.map((vid) => {
       if (!vid) return false;
-      if (/\.(mp3|m4a|aac|wav|ogg|flac)(\?|#|$)/i.test(vid.url)) return true;
-      if (/\.(mp4|webm|mov|m4v|mkv)(\?|#|$)/i.test(vid.url)) return false;
+      const mediaUrl = getPlayableMediaUrl(vid);
+      if (/\.(mp3|m4a|aac|wav|ogg|flac)(\?|#|$)/i.test(mediaUrl || '')) return true;
+      if (/\.(mp4|webm|mov|m4v|mkv)(\?|#|$)/i.test(mediaUrl || '')) return false;
       return vid.type === 'audio';
     });
 
@@ -501,7 +572,7 @@ export default function WatchMultiPage({ idOverride } = {}) {
         unsubscribeTimeupdate();
       });
 
-      const audioSrc = getMediaProxyUrl(vid.url);
+      const audioSrc = getMediaProxyUrl(getPlayableMediaUrl(vid));
       if (audioSrc) wavesurfer.load(audioSrc);
       wavesurferRefs.current[index] = wavesurfer;
     });
@@ -551,6 +622,26 @@ export default function WatchMultiPage({ idOverride } = {}) {
     if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
   };
 
+  const handleVideoError = (index) => {
+    syncMediaLoadState(index, { isLoading: false, label: 'Load error' });
+
+    const sourceUrl = getTwitterSourceUrl(videoData[index]);
+    if (!sourceUrl || twitterRefreshAttemptedRefs.current[index]) return;
+
+    twitterRefreshAttemptedRefs.current[index] = true;
+    syncMediaLoadState(index, { isLoading: true, label: 'Refreshing X video' });
+
+    resolveXVideo(sourceUrl)
+      .then((resolved) => {
+        applyResolvedTwitterVideo(index, resolved);
+        setError(null);
+      })
+      .catch(() => {
+        syncMediaLoadState(index, { isLoading: false, label: 'Load error' });
+        setError('An X/Twitter video could not be refreshed. The original post may be unavailable or may no longer expose a playable video.');
+      });
+  };
+
   const handleSeek = (e, index) => {
     const video = videoRefs.current[index];
     const bar = e.currentTarget;
@@ -582,11 +673,6 @@ export default function WatchMultiPage({ idOverride } = {}) {
   };
 
   const togglePlayback = (index) => {
-    if (isXPostUrl(videoData[index]?.url)) {
-      goToNextItem(index);
-      return;
-    }
-
     const video = videoRefs.current[index];
     if (!video) return;
     if (video.paused) {
@@ -631,38 +717,10 @@ export default function WatchMultiPage({ idOverride } = {}) {
     }
 
     const nextVideo = videoRefs.current[nextIndex];
-    if (nextVideo && !isXPostUrl(videoData[nextIndex]?.url)) {
+    if (nextVideo) {
       setTimeout(() => {
         nextVideo.play().catch(() => {});
       }, 300);
-    }
-  };
-
-  const goToPreviousItem = (index) => {
-    const previousIndex = index - 1;
-    if (previousIndex < 0) {
-      if (feedRef.current) feedRef.current.scrollTo({ top: 0, behavior: 'smooth' });
-      return;
-    }
-
-    const previousItem = itemRefs.current[previousIndex];
-    if (previousItem) {
-      previousItem.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }
-  };
-
-  const handleXPostScrollIntent = (index, deltaY) => {
-    if (Math.abs(deltaY) < 12 || xScrollLockRef.current) return;
-
-    xScrollLockRef.current = true;
-    window.setTimeout(() => {
-      xScrollLockRef.current = false;
-    }, 650);
-
-    if (deltaY > 0) {
-      goToNextItem(index);
-    } else {
-      goToPreviousItem(index);
     }
   };
 
@@ -996,10 +1054,13 @@ export default function WatchMultiPage({ idOverride } = {}) {
       onTouchStart={revealChrome}
     >
       {videoData.map((vid, index) => {
-        const isXPost = isXPostUrl(vid.url);
+        const isTwitter = isTwitterItem(vid);
+        const twitterSourceUrl = getTwitterSourceUrl(vid);
+        const mediaUrl = getPlayableMediaUrl(vid);
         const isAudio = isAudioItem(vid);
         const isPlaying = !!playingStates[index];
         const isLooping = loopStates[index] ?? !!vid.loop;
+        const downloadUrl = mediaUrl || twitterSourceUrl;
         return (
           <div
             key={index}
@@ -1015,62 +1076,57 @@ export default function WatchMultiPage({ idOverride } = {}) {
             }}
           >
             <div ref={(el) => (elasticShellRefs.current[index] = el)} style={mediaElasticShellStyle}>
-              {isXPost ? (
-                <XPostEmbed
-                  url={getCanonicalXPostUrl(vid.url)}
-                  onScrollIntent={(deltaY) => handleXPostScrollIntent(index, deltaY)}
+              <>
+                <video
+                  ref={(el) => (videoRefs.current[index] = el)}
+                  muted={muted}
+                  controls={false}
+                  playsInline
+                  preload="auto"
+                  crossOrigin="anonymous"
+                  poster={vid.poster || undefined}
+                  onLoadStart={() => syncMediaLoadState(index, {
+                    isLoading: !isAudio,
+                    label: mediaUrl?.endsWith('.m3u8') ? 'Starting stream' : 'Loading',
+                  })}
+                  onLoadedMetadata={() => syncMediaLoadState(index, {
+                    isLoading: !isAudio,
+                    label: mediaUrl?.endsWith('.m3u8') ? 'Buffering stream' : 'Loading',
+                  })}
+                  onProgress={() => syncMediaLoadState(index)}
+                  onCanPlay={() => syncMediaLoadState(index, { isLoading: false, label: 'Ready' })}
+                  onPlaying={() => syncMediaLoadState(index, { isLoading: false, label: 'Playing' })}
+                  onWaiting={() => syncMediaLoadState(index, { isLoading: !isAudio, label: 'Buffering' })}
+                  onStalled={() => syncMediaLoadState(index, { isLoading: !isAudio, label: 'Buffering' })}
+                  onSeeking={() => syncMediaLoadState(index, { isLoading: !isAudio, label: 'Seeking' })}
+                  onSeeked={() => syncMediaLoadState(index, { isLoading: false, label: 'Ready' })}
+                  onError={() => handleVideoError(index)}
+                  onPlay={() => handlePlay(index)}
+                  onPause={() => handlePause(index)}
+                  onEnded={() => handleEnded(index)}
+                  onClick={() => {
+                    const v = videoRefs.current[index];
+                    if (!v) return;
+                    if (v.paused) v.play();
+                    else v.pause();
+                  }}
+                  style={{
+                    width: '100%',
+                    height: '100%',
+                    objectFit: 'contain',
+                    backgroundColor: 'black',
+                    cursor: 'pointer',
+                    opacity: isAudio ? 0 : 1,
+                    pointerEvents: isAudio ? 'none' : 'auto',
+                    transition: 'opacity 0.35s ease',
+                  }}
                 />
-              ) : (
-                <>
-                  <video
-                    ref={(el) => (videoRefs.current[index] = el)}
-                    muted={muted}
-                    controls={false}
-                    playsInline
-                    preload="auto"
-                    crossOrigin="anonymous"
-                    onLoadStart={() => syncMediaLoadState(index, {
-                      isLoading: !isAudio,
-                      label: vid.url?.endsWith('.m3u8') ? 'Starting stream' : 'Loading',
-                    })}
-                    onLoadedMetadata={() => syncMediaLoadState(index, {
-                      isLoading: !isAudio,
-                      label: vid.url?.endsWith('.m3u8') ? 'Buffering stream' : 'Loading',
-                    })}
-                    onProgress={() => syncMediaLoadState(index)}
-                    onCanPlay={() => syncMediaLoadState(index, { isLoading: false, label: 'Ready' })}
-                    onPlaying={() => syncMediaLoadState(index, { isLoading: false, label: 'Playing' })}
-                    onWaiting={() => syncMediaLoadState(index, { isLoading: !isAudio, label: 'Buffering' })}
-                    onStalled={() => syncMediaLoadState(index, { isLoading: !isAudio, label: 'Buffering' })}
-                    onSeeking={() => syncMediaLoadState(index, { isLoading: !isAudio, label: 'Seeking' })}
-                    onSeeked={() => syncMediaLoadState(index, { isLoading: false, label: 'Ready' })}
-                    onError={() => syncMediaLoadState(index, { isLoading: false, label: 'Load error' })}
-                    onPlay={() => handlePlay(index)}
-                    onPause={() => handlePause(index)}
-                    onEnded={() => handleEnded(index)}
-                    onClick={() => {
-                      const v = videoRefs.current[index];
-                      if (v.paused) v.play();
-                      else v.pause();
-                    }}
-                    style={{
-                      width: '100%',
-                      height: '100%',
-                      objectFit: 'contain',
-                      backgroundColor: 'black',
-                      cursor: 'pointer',
-                      opacity: isAudio ? 0 : 1,
-                      pointerEvents: isAudio ? 'none' : 'auto',
-                      transition: 'opacity 0.35s ease',
-                    }}
-                  />
-                  <MediaLoadingOverlay
-                    visible={!isAudio && !!mediaLoadStates[index]?.isLoading}
-                    percent={mediaLoadStates[index]?.loadedPercent}
-                    label={mediaLoadStates[index]?.label}
-                  />
-                </>
-              )}
+                <MediaLoadingOverlay
+                  visible={!isAudio && (Boolean(mediaUrl) || isTwitter) && !!mediaLoadStates[index]?.isLoading}
+                  percent={mediaLoadStates[index]?.loadedPercent}
+                  label={mediaLoadStates[index]?.label}
+                />
+              </>
             </div>
 
             <img
@@ -1135,14 +1191,33 @@ export default function WatchMultiPage({ idOverride } = {}) {
                   <div style={{ marginTop: '0.35rem', color: '#cfe2ff' }}>{vid.description}</div>
                 )}
                 <div style={{ marginTop: '0.6rem', fontSize: '0.82rem', color: '#d6e5ff' }}>
+                  {isTwitter ? (
+                    <>
+                      <div style={{ marginBottom: '0.35rem' }}>
+                        <span style={{ fontWeight: 600 }}>Source:</span> X/Twitter
+                      </div>
+                      {(vid.username || vid.name) && (
+                        <div style={{ marginBottom: '0.35rem' }}>
+                          <span style={{ fontWeight: 600 }}>Author:</span>{' '}
+                          {vid.username ? `@${vid.username}` : vid.name}
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <div style={{ marginBottom: '0.35rem' }}>
+                      <span style={{ fontWeight: 600 }}>Author:</span> {vid.author || 'Anonymous'}
+                    </div>
+                  )}
                   <div style={{ marginBottom: '0.35rem' }}>
-                    <span style={{ fontWeight: 600 }}>Author:</span> {vid.author || 'Anonymous'}
-                  </div>
-                  <div style={{ marginBottom: '0.35rem' }}>
-                    <span style={{ fontWeight: 600 }}>Link:</span>{' '}
-                    {vid.url ? (
-                      <a href={vid.url} target="_blank" rel="noreferrer" style={infoLinkStyle}>
-                        {vid.url}
+                    <span style={{ fontWeight: 600 }}>{isTwitter ? 'Original post:' : 'Link:'}</span>{' '}
+                    {(isTwitter ? twitterSourceUrl : mediaUrl) ? (
+                      <a
+                        href={isTwitter ? twitterSourceUrl : mediaUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        style={infoLinkStyle}
+                      >
+                        {isTwitter ? twitterSourceUrl : mediaUrl}
                       </a>
                     ) : (
                       'Unavailable'
@@ -1154,42 +1229,36 @@ export default function WatchMultiPage({ idOverride } = {}) {
 
             <div style={controlsBarStyle}>
               <div style={controlsRowStyle}>
-                {!isXPost && (
-                  <div style={controlsGroupStyle}>
-                    <div onClick={toggleMute} style={iconButtonStyle} title={muted ? 'Unmute' : 'Mute'}>
-                      {muted ? <FaVolumeMute size={18} /> : <FaVolumeUp size={18} />}
-                    </div>
-                    <input
-                      type="range"
-                      min="0"
-                      max="1"
-                      step="0.01"
-                      value={volume}
-                      onChange={handleVolumeChange}
-                      style={volumeSliderStyle}
-                      aria-label="Volume"
-                    />
-                  </div>
-                )}
                 <div style={controlsGroupStyle}>
-                  {!isXPost && (
-                    <>
-                      <div
-                        onClick={() => toggleLoop(index)}
-                        style={{ ...iconButtonStyle, ...(isLooping ? toggleActiveStyle : null) }}
-                        title={isLooping ? 'Disable Loop' : 'Enable Loop'}
-                      >
-                        <FaRedo size={16} color="#fff" />
-                      </div>
-                      <div
-                        onClick={toggleAutoPlayNext}
-                        style={{ ...iconButtonStyle, ...(autoPlayNext ? toggleActiveStyle : null) }}
-                        title={autoPlayNext ? 'Disable Auto-Play Next' : 'Enable Auto-Play Next'}
-                      >
-                        <FaStepForward size={16} color="#fff" />
-                      </div>
-                    </>
-                  )}
+                  <div onClick={toggleMute} style={iconButtonStyle} title={muted ? 'Unmute' : 'Mute'}>
+                    {muted ? <FaVolumeMute size={18} /> : <FaVolumeUp size={18} />}
+                  </div>
+                  <input
+                    type="range"
+                    min="0"
+                    max="1"
+                    step="0.01"
+                    value={volume}
+                    onChange={handleVolumeChange}
+                    style={volumeSliderStyle}
+                    aria-label="Volume"
+                  />
+                </div>
+                <div style={controlsGroupStyle}>
+                  <div
+                    onClick={() => toggleLoop(index)}
+                    style={{ ...iconButtonStyle, ...(isLooping ? toggleActiveStyle : null) }}
+                    title={isLooping ? 'Disable Loop' : 'Enable Loop'}
+                  >
+                    <FaRedo size={16} color="#fff" />
+                  </div>
+                  <div
+                    onClick={toggleAutoPlayNext}
+                    style={{ ...iconButtonStyle, ...(autoPlayNext ? toggleActiveStyle : null) }}
+                    title={autoPlayNext ? 'Disable Auto-Play Next' : 'Enable Auto-Play Next'}
+                  >
+                    <FaStepForward size={16} color="#fff" />
+                  </div>
                   <div
                     onClick={() => {
                       setShowInfo((prev) => !prev);
@@ -1204,9 +1273,9 @@ export default function WatchMultiPage({ idOverride } = {}) {
                     <FaQrcode size={18} />
                   </div>
                   <div
-                    onClick={() => window.open(isXPost ? getCanonicalXPostUrl(vid.url) : vid.url, '_blank')}
+                    onClick={() => downloadUrl && window.open(downloadUrl, '_blank')}
                     style={iconButtonStyle}
-                    title={isXPost ? 'Open X Post' : 'Download'}
+                    title="Download"
                   >
                     <FaDownload size={18} />
                   </div>
@@ -1217,28 +1286,19 @@ export default function WatchMultiPage({ idOverride } = {}) {
                   type="button"
                   onClick={() => togglePlayback(index)}
                   style={seekButtonStyle}
-                  aria-label={isXPost ? 'Next' : isPlaying ? 'Pause' : 'Play'}
+                  aria-label={isPlaying ? 'Pause' : 'Play'}
                 >
-                  {isXPost ? <FaStepForward size={16} color="#fff" /> : isPlaying ? <FaPause size={16} color="#fff" /> : <FaPlay size={16} color="#fff" />}
+                  {isPlaying ? <FaPause size={16} color="#fff" /> : <FaPlay size={16} color="#fff" />}
                 </button>
-                {!isXPost && (
-                  <>
-                    <div ref={(el) => (seekTimeRefs.current[index] = el)} style={seekTimeStyle}>0:00</div>
-                    <div onClick={(e) => handleSeek(e, index)} style={progressWrapperStyle}>
-                      <div style={progressTrackStyle}>
-                        <div ref={(el) => (progressRefs.current[index] = el)} style={progressFillStyle} />
-                      </div>
-                    </div>
-                    <div ref={(el) => (seekDurationRefs.current[index] = el)} style={seekDurationStyle}>0:00</div>
-                  </>
-                )}
-                {isXPost && (
-                  <div style={progressWrapperStyle}>
-                    <div style={{ ...progressTrackStyle, opacity: 0.32 }}>
-                      <div style={{ ...progressFillStyle, width: '100%' }} />
+                <>
+                  <div ref={(el) => (seekTimeRefs.current[index] = el)} style={seekTimeStyle}>0:00</div>
+                  <div onClick={(e) => handleSeek(e, index)} style={progressWrapperStyle}>
+                    <div style={progressTrackStyle}>
+                      <div ref={(el) => (progressRefs.current[index] = el)} style={progressFillStyle} />
                     </div>
                   </div>
-                )}
+                  <div ref={(el) => (seekDurationRefs.current[index] = el)} style={seekDurationStyle}>0:00</div>
+                </>
               </div>
             </div>
           </div>

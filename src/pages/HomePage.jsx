@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { isXPostUrl, resolveXVideo } from '../utils/xPost';
 
 function HomePage() {
   const [mode, setMode] = useState('video');
@@ -22,27 +23,51 @@ function HomePage() {
     setLoading(true);
 
     const id = Math.random().toString(36).substring(2, 8);
-    const urls = url.split(',').map((s) => s.trim()).filter(Boolean);
+    const urls = url.split(/[\n,]+/).map((s) => s.trim()).filter(Boolean);
+    if (!urls.length) {
+      setLoading(false);
+      return;
+    }
 
-    const payload = urls.length === 1
-      ? {
-          id,
-          url: urls[0],
-          filename,
-          description,
-          volume,
-          loop,
-          type: mode,
-        }
-      : {
-          id,
-          videos: urls.map((u) => ({ url: u, filename, description })),
-          volume,
-          loop,
-          type: mode,
-        };
+    const resolveItem = async (inputUrl) => {
+      if (mode !== 'video' || !isXPostUrl(inputUrl)) {
+        return { url: inputUrl, filename, description };
+      }
+
+      const resolved = await resolveXVideo(inputUrl);
+      return {
+        url: resolved.videoUrl,
+        videoUrl: resolved.videoUrl,
+        filename,
+        description: resolved.description || description,
+        type: 'twitter',
+        source: resolved.source,
+        sourceUrl: resolved.sourceUrl,
+        tweetId: resolved.tweetId,
+        poster: resolved.poster,
+        width: resolved.width,
+        height: resolved.height,
+        durationMs: resolved.durationMs,
+        username: resolved.username,
+        name: resolved.name,
+        profileImage: resolved.profileImage,
+        possiblySensitive: resolved.possiblySensitive,
+      };
+    };
 
     try {
+      const items = await Promise.all(urls.map((u) => resolveItem(u)));
+
+      const payload = urls.length === 1
+        ? { id, ...items[0], volume, loop, type: items[0].type || mode }
+        : {
+            id,
+            videos: items,
+            volume,
+            loop,
+            type: mode,
+          };
+
       const res = await fetch('/api/save', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -143,20 +168,23 @@ function HomePage() {
             </div>
           ) : (
             <>
-          <input
-            type="text"
+          <textarea
             placeholder={mode === 'audio'
-              ? 'Paste audio URL(s) — separate with commas for multiple'
-              : 'Paste video URL(s) — separate with commas for multiple'}
+              ? 'Paste audio URL(s). Use one per line or separate with commas.'
+              : 'Paste video or X post URL(s). Use one per line or separate with commas.'}
             value={url}
             onChange={(e) => setUrl(e.target.value)}
+            rows={4}
+            spellCheck={false}
             style={{
               width: '80%',
               padding: '0.5rem',
               fontSize: '14px',
               marginBottom: '1rem',
               border: '1px solid #ccc',
-              borderRadius: '4px'
+              borderRadius: '4px',
+              lineHeight: 1.35,
+              resize: 'vertical'
             }}
           /><br />
 
@@ -258,8 +286,11 @@ function HomePage() {
         {!loading && !isStudio && (
           <div style={{ marginTop: '2rem', fontSize: '14px', color: '#444' }}>
             <ol style={{ textAlign: 'left', display: 'inline-block', lineHeight: '1.6' }}>
-              <li><strong>Paste a direct {mode} link</strong> (e.g. {mode === 'audio' ? 'MP3' : 'MP4'})</li>
-              <li><strong>Use commas to separate multiple links</strong></li>
+              <li>
+                <strong>{mode === 'audio' ? 'Paste a direct audio link' : 'Paste video links or X post links'}</strong>
+                {' '}(e.g. {mode === 'audio' ? 'MP3' : 'MP4 or x.com/status/...'})
+              </li>
+              <li><strong>Use commas or new lines to separate multiple links</strong></li>
               <li><strong>Enter title & description</strong></li>
               <li><strong>Adjust volume & loop</strong> (optional)</li>
               <li><strong>Generate a shareable link</strong></li>
@@ -289,4 +320,3 @@ function HomePage() {
 }
 
 export default HomePage;
-
