@@ -24,6 +24,8 @@ const defaultAllowedHostEntries = [
   'twitter.com',
   'www.twitter.com',
   'mobile.twitter.com',
+  'demo.unified-streaming.com',
+  '*.cloudfront.net',
 ];
 
 const configuredAllowedHostEntries = [

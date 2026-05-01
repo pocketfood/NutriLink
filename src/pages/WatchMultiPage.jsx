@@ -284,7 +284,7 @@ export default function WatchMultiPage({ idOverride } = {}) {
         .catch(() => {
           if (cancelled) return;
           syncMediaLoadState(index, { isLoading: false, label: 'Load error' });
-          removeVideoAtRef.current?.(index, 'No playable videos are available.');
+          removeVideoAtRef.current?.(index, 'No playable videos are available. The remaining links are expired, blocked, or not publicly accessible.');
         });
     });
 
@@ -672,7 +672,7 @@ export default function WatchMultiPage({ idOverride } = {}) {
 
     const sourceUrl = getTwitterSourceUrl(videoData[index]);
     if (!sourceUrl || twitterRefreshAttemptedRefs.current[index]) {
-      removeVideoAt(index, 'No playable videos are available.');
+      removeVideoAt(index, 'No playable videos are available. The remaining links are expired, blocked, or not publicly accessible.');
       return;
     }
 
@@ -686,7 +686,7 @@ export default function WatchMultiPage({ idOverride } = {}) {
       })
       .catch(() => {
         syncMediaLoadState(index, { isLoading: false, label: 'Load error' });
-        removeVideoAt(index, 'No playable videos are available.');
+        removeVideoAt(index, 'No playable videos are available. The remaining links are expired, blocked, or not publicly accessible.');
       });
   };
 

@@ -339,7 +339,7 @@ export default function WatchPage({ idOverride } = {}) {
           hls.on(Hls.Events.ERROR, (event, data) => {
             if (data.fatal) {
               syncMediaLoadState({ isLoading: false, label: 'Stream error' });
-              setError('Error loading video stream');
+              setError('This video source could not be loaded. The link may be expired, blocked, or not publicly accessible.');
             }
           });
           hls.on(Hls.Events.MANIFEST_LOADING, () => {
@@ -725,7 +725,12 @@ export default function WatchPage({ idOverride } = {}) {
   const handleVideoError = () => {
     syncMediaLoadState({ isLoading: false, label: 'Load error' });
 
-    if (!isTwitterVideo || !twitterSourceUrl || twitterRefreshAttemptedRef.current) return;
+    if (!isTwitterVideo || !twitterSourceUrl) {
+      setError('This video source could not be loaded. The link may be expired, blocked, or not publicly accessible.');
+      return;
+    }
+
+    if (twitterRefreshAttemptedRef.current) return;
 
     twitterRefreshAttemptedRef.current = true;
     setMediaLoadState({ isLoading: true, loadedPercent: null, label: 'Refreshing X video' });
