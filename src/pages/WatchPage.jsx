@@ -7,8 +7,6 @@ import {
   FaVolumeMute,
   FaVolumeUp,
   FaInfoCircle,
-  FaPlay,
-  FaPause,
   FaRedo,
   FaChevronUp,
   FaChevronDown,
@@ -17,6 +15,7 @@ import WaveSurfer from 'wavesurfer.js';
 import Multitrack from 'wavesurfer-multitrack';
 import Hls from 'hls.js';
 import MediaLoadingOverlay from '../components/MediaLoadingOverlay';
+import PlaybackGlyph from '../components/PlaybackGlyph';
 import { nextMediaLoadState } from '../utils/mediaLoading';
 import { isXPostUrl, resolveXVideo } from '../utils/xPost';
 
@@ -1454,7 +1453,7 @@ export default function WatchPage({ idOverride } = {}) {
             style={seekButtonStyle}
             aria-label={isPlaying ? 'Pause' : 'Play'}
           >
-            {isPlaying ? <FaPause size={16} color="#fff" /> : <FaPlay size={16} color="#fff" />}
+            <PlaybackGlyph playing={isPlaying} />
           </button>
           <div ref={seekTimeRef} style={seekTimeStyle}>0:00</div>
           <div onClick={handleSeek} style={progressWrapperStyle}>

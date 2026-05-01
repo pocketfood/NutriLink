@@ -7,14 +7,13 @@ import {
   FaVolumeMute,
   FaVolumeUp,
   FaInfoCircle,
-  FaPlay,
-  FaPause,
   FaRedo,
   FaStepForward,
 } from 'react-icons/fa';
 import Hls from 'hls.js';
 import WaveSurfer from 'wavesurfer.js';
 import MediaLoadingOverlay from '../components/MediaLoadingOverlay';
+import PlaybackGlyph from '../components/PlaybackGlyph';
 import { nextMediaLoadState } from '../utils/mediaLoading';
 import { isXPostUrl, resolveXVideo } from '../utils/xPost';
 
@@ -1306,7 +1305,7 @@ export default function WatchMultiPage({ idOverride } = {}) {
                   style={seekButtonStyle}
                   aria-label={isPlaying ? 'Pause' : 'Play'}
                 >
-                  {isPlaying ? <FaPause size={16} color="#fff" /> : <FaPlay size={16} color="#fff" />}
+                  <PlaybackGlyph playing={isPlaying} />
                 </button>
                 <>
                   <div ref={(el) => (seekTimeRefs.current[index] = el)} style={seekTimeStyle}>0:00</div>
