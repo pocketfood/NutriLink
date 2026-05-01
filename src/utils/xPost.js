@@ -37,8 +37,8 @@ export async function resolveXVideo(value) {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     const detail =
+      data.details?.message ||
       data.details?.detail ||
-      data.details?.title ||
       data.details?.errors?.[0]?.detail ||
       data.details?.errors?.[0]?.message ||
       data.errors?.[0]?.detail ||

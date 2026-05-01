@@ -72,6 +72,48 @@ function findBestVideoMedia(tweet, includes) {
     })[0] || null;
 }
 
+function getXErrorTitle(details) {
+  if (typeof details?.title === 'string') return details.title;
+  if (Array.isArray(details?.errors)) {
+    return details.errors.find((error) => typeof error?.title === 'string')?.title || null;
+  }
+  return null;
+}
+
+function getXErrorType(details) {
+  if (typeof details?.type === 'string') return details.type;
+  if (Array.isArray(details?.errors)) {
+    return details.errors.find((error) => typeof error?.type === 'string')?.type || null;
+  }
+  return null;
+}
+
+function getSafeXErrorMessage(status, title, type) {
+  const safeTitle = String(title || '');
+  const safeType = String(type || '');
+
+  if (status === 402 || /credits/i.test(safeTitle) || /credits/i.test(safeType)) {
+    return 'X API credits are unavailable for this app right now.';
+  }
+  if (status === 401) return 'X API authentication failed.';
+  if (status === 403) return 'X API access is not allowed for this request.';
+  if (status === 404) return 'The X/Twitter post could not be found.';
+  if (status === 429) return 'X API rate limit reached. Please try again later.';
+  if (status >= 500) return 'X API is unavailable right now. Please try again later.';
+  return 'X API could not resolve this post.';
+}
+
+function sanitizeXApiError(details, status) {
+  const title = getXErrorTitle(details);
+  const type = getXErrorType(details);
+
+  return {
+    title,
+    type,
+    message: getSafeXErrorMessage(status, title, type),
+  };
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST');
@@ -90,7 +132,7 @@ export default async function handler(req, res) {
   const bearerToken = process.env.X_BEARER_TOKEN;
   if (!bearerToken) {
     return sendJson(res, 500, {
-      error: 'X_BEARER_TOKEN is not configured on the server',
+      error: 'X video resolver is not configured on the server',
     });
   }
 
@@ -115,7 +157,9 @@ export default async function handler(req, res) {
   } catch (err) {
     return sendJson(res, 502, {
       error: 'Failed to reach the X API',
-      details: err instanceof Error ? err.message : 'Unknown network error',
+      details: {
+        message: err instanceof Error ? err.message : 'Unknown network error',
+      },
     });
   }
 
@@ -123,7 +167,7 @@ export default async function handler(req, res) {
     return sendJson(res, upstream.status, {
       error: 'X API request failed',
       status: upstream.status,
-      details,
+      details: sanitizeXApiError(details, upstream.status),
     });
   }
 
@@ -131,7 +175,7 @@ export default async function handler(req, res) {
   if (!tweet) {
     return sendJson(res, 404, {
       error: 'X post not found',
-      details: details?.errors || details || null,
+      details: sanitizeXApiError(details, 404),
     });
   }
 
@@ -139,7 +183,9 @@ export default async function handler(req, res) {
   if (!bestVideo) {
     return sendJson(res, 404, {
       error: 'No video was found on this X/Twitter post',
-      details: details?.errors || null,
+      details: {
+        message: 'This X/Twitter post does not include a playable video.',
+      },
     });
   }
 
