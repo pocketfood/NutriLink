@@ -1,5 +1,7 @@
 {
   "rewrites": [
+    { "source": "/v/:id*", "destination": "/api/share-page?route=v&id=:id*" },
+    { "source": "/m/:id*", "destination": "/api/share-page?route=m&id=:id*" },
     { "source": "/(.*)", "destination": "/" }
   ]
 }
