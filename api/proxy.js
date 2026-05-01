@@ -34,6 +34,8 @@ const defaultAllowedHostEntries = [
   'media.discordapp.net',
   '*.discordapp.com',
   '*.discordapp.net',
+  '*.castr.com',
+  '*.akamaihd.net',
 ];
 
 const configuredAllowedHostEntries = [
@@ -135,7 +137,12 @@ export default async function handler(req, res) {
     return;
   }
 
-  const upstreamHeaders = {};
+  const upstreamHeaders = {
+    Accept: '*/*',
+    'User-Agent':
+      req.headers['user-agent'] ||
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+  };
   if (req.headers.range) upstreamHeaders.Range = req.headers.range;
 
   try {
