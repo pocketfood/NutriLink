@@ -36,7 +36,17 @@ export async function resolveXVideo(value) {
 
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    throw new Error(data.error || 'Unable to resolve X/Twitter video');
+    const detail =
+      data.details?.detail ||
+      data.details?.title ||
+      data.details?.errors?.[0]?.detail ||
+      data.details?.errors?.[0]?.message ||
+      data.errors?.[0]?.detail ||
+      data.errors?.[0]?.message;
+    const status = data.status || res.status;
+    const title = data.details?.title ? ` ${data.details.title}` : '';
+    const suffix = detail ? `: ${detail}` : '';
+    throw new Error(`${data.error || 'Unable to resolve X/Twitter video'} (${status}${title})${suffix}`);
   }
 
   return data;
