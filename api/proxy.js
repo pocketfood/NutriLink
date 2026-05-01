@@ -100,6 +100,14 @@ function isAllowedHost(targetUrl) {
   return ALLOWED_WILDCARD_SUFFIXES.some((suffix) => hostname.endsWith(suffix));
 }
 
+function normalizeUpstreamUrl(targetUrl) {
+  if (targetUrl.hostname.toLowerCase() !== 'stream-fastly.castr.com') return targetUrl;
+
+  const normalized = new URL(targetUrl.toString());
+  normalized.hostname = 'stream-akamai.castr.com';
+  return normalized;
+}
+
 function isHlsPlaylistUrl(value) {
   return /\.m3u8?$/i.test(value.pathname);
 }
@@ -167,7 +175,9 @@ export default async function handler(req, res) {
     return;
   }
 
-  if (!isAllowedHost(parsed)) {
+  const upstreamUrl = normalizeUpstreamUrl(parsed);
+
+  if (!isAllowedHost(upstreamUrl)) {
     res.status(403).json({ error: 'Proxy host not allowed' });
     return;
   }
@@ -181,13 +191,13 @@ export default async function handler(req, res) {
   if (req.headers.range) upstreamHeaders.Range = req.headers.range;
 
   try {
-    const upstream = await fetch(parsed.toString(), {
+    const upstream = await fetch(upstreamUrl.toString(), {
       method: req.method,
       headers: upstreamHeaders,
       redirect: 'follow',
     });
 
-    const shouldRewriteHls = req.method !== 'HEAD' && upstream.ok && isHlsPlaylistResponse(parsed, upstream);
+    const shouldRewriteHls = req.method !== 'HEAD' && upstream.ok && isHlsPlaylistResponse(upstreamUrl, upstream);
 
     const passthroughHeaders = [
       'content-type',
