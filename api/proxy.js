@@ -26,6 +26,14 @@ const defaultAllowedHostEntries = [
   'mobile.twitter.com',
   'demo.unified-streaming.com',
   '*.cloudfront.net',
+  '*.9cache.com',
+  '9gag.com',
+  'www.9gag.com',
+  '*.4cdn.org',
+  'cdn.discordapp.com',
+  'media.discordapp.net',
+  '*.discordapp.com',
+  '*.discordapp.net',
 ];
 
 const configuredAllowedHostEntries = [
