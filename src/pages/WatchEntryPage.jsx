@@ -1,6 +1,23 @@
+import { lazy, Suspense } from 'react';
 import { useParams } from 'react-router-dom';
-import WatchPage from './WatchPage';
-import WatchMultiPage from './WatchMultiPage';
+
+const WatchPage = lazy(() => import('./WatchPage'));
+const WatchMultiPage = lazy(() => import('./WatchMultiPage'));
+
+function WatchLoading() {
+  return (
+    <div style={{
+      minHeight: '100vh',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: 'black',
+      color: 'white',
+    }}>
+      Loading video...
+    </div>
+  );
+}
 
 const splitIds = (value) =>
   value
@@ -15,12 +32,24 @@ export default function WatchEntryPage() {
   const ids = splitIds(rawIds);
 
   if (ids.length > 1) {
-    return <WatchMultiPage idOverride={ids.join(',')} />;
+    return (
+      <Suspense fallback={<WatchLoading />}>
+        <WatchMultiPage idOverride={ids.join(',')} />
+      </Suspense>
+    );
   }
 
   if (ids.length === 1) {
-    return <WatchPage idOverride={ids[0]} />;
+    return (
+      <Suspense fallback={<WatchLoading />}>
+        <WatchPage idOverride={ids[0]} />
+      </Suspense>
+    );
   }
 
-  return <WatchPage />;
+  return (
+    <Suspense fallback={<WatchLoading />}>
+      <WatchPage />
+    </Suspense>
+  );
 }
