@@ -26,7 +26,12 @@ const defaultAllowedHostEntries = [
   'mobile.twitter.com',
 ];
 
-const configuredAllowedHostEntries = (process.env.AUDIO_PROXY_ALLOWED_HOSTS || '')
+const configuredAllowedHostEntries = [
+  process.env.AUDIO_PROXY_ALLOWED_HOSTS,
+  process.env.MEDIA_PROXY_ALLOWED_HOSTS,
+]
+  .filter(Boolean)
+  .join(',')
   .split(',')
   .map((host) => host.trim())
   .filter(Boolean);
@@ -56,7 +61,7 @@ allowedHostEntries.forEach((host) => {
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': ALLOWED_ORIGIN,
-  'Access-Control-Allow-Methods': 'GET, OPTIONS',
+  'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
   'Access-Control-Allow-Headers': 'Range, Content-Type, Authorization',
   'Access-Control-Expose-Headers': 'Content-Length, Content-Range, Accept-Ranges, Content-Type',
   ...(ALLOWED_ORIGIN === '*'
@@ -91,7 +96,7 @@ export default async function handler(req, res) {
     return;
   }
 
-  if (req.method !== 'GET') {
+  if (req.method !== 'GET' && req.method !== 'HEAD') {
     res.status(405).json({ error: 'Method not allowed' });
     return;
   }
@@ -125,6 +130,7 @@ export default async function handler(req, res) {
 
   try {
     const upstream = await fetch(parsed.toString(), {
+      method: req.method,
       headers: upstreamHeaders,
       redirect: 'follow',
     });
@@ -146,6 +152,11 @@ export default async function handler(req, res) {
       const value = upstream.headers.get(header);
       if (value) res.setHeader(header, value);
     });
+
+    if (req.method === 'HEAD') {
+      res.end();
+      return;
+    }
 
     if (!upstream.body) {
       res.status(502).json({ error: 'Upstream response missing body' });

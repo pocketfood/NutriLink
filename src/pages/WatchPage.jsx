@@ -19,6 +19,7 @@ import PlaybackGlyph from '../components/PlaybackGlyph';
 import { nextMediaLoadState } from '../utils/mediaLoading';
 import { isXPostUrl, resolveXVideo } from '../utils/xPost';
 import { getTwitterPostText, getUserDisplayDescription, isSameDescription } from '../utils/twitterMetadata';
+import { isHlsUrl } from '../utils/mediaUrls';
 
 const STUDIO_TRACK_COLORS = [
   { wave: 'rgba(127,176,255,0.7)', progress: '#4da2ff' },
@@ -205,6 +206,7 @@ export default function WatchPage({ idOverride } = {}) {
   const mediaSrc = playableMediaUrl ? getMediaProxyUrl(playableMediaUrl) : null;
   const audioSrc = mixUrl ? getMediaProxyUrl(mixUrl) : isAudioContent ? mediaSrc : null;
   const videoSrc = hasStudioVideo ? getMediaProxyUrl(videoData.videoUrl) : mixUrl ? null : mediaSrc;
+  const isHlsVideo = Boolean(!isAudioOnlyPlayback && playableMediaUrl && isHlsUrl(playableMediaUrl));
   const primaryMediaRef = mixUrl ? audioRef : videoRef;
   const downloadUrl = mixUrl || videoData?.videoUrl || (isXPostUrl(videoData?.url) ? null : videoData?.url) || twitterSourceUrl;
   const twitterPostText = isTwitterVideo ? getTwitterPostText(videoData) : '';
@@ -324,7 +326,7 @@ export default function WatchPage({ idOverride } = {}) {
     }
 
     if (video && videoSrc) {
-      if (videoSrc.endsWith('.m3u8')) {
+      if (isHlsVideo) {
         if (Hls.isSupported()) {
           const hls = new Hls({
             xhrSetup: (xhr, url) => {
@@ -332,7 +334,7 @@ export default function WatchPage({ idOverride } = {}) {
             },
             fetchSetup: (context, init) => new Request(getMediaProxyUrl(context.url), init),
           });
-          hls.loadSource(videoSrc);
+          hls.loadSource(playableMediaUrl);
           hls.attachMedia(video);
           hls.on(Hls.Events.ERROR, (event, data) => {
             if (data.fatal) {
@@ -351,7 +353,7 @@ export default function WatchPage({ idOverride } = {}) {
           });
           hlsRef.current = hls;
         } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-          video.src = videoSrc;
+          video.src = playableMediaUrl;
         } else {
           setError('HLS is not supported in this browser');
         }
@@ -369,7 +371,7 @@ export default function WatchPage({ idOverride } = {}) {
         hlsRef.current = null;
       }
     };
-  }, [videoData, audioSrc, videoSrc, isAudioOnlyPlayback]);
+  }, [videoData, audioSrc, videoSrc, isAudioOnlyPlayback, isHlsVideo, playableMediaUrl]);
 
   useEffect(() => {
     if (!useStudioPlayback || !studioWaveRef.current) {
@@ -1239,11 +1241,11 @@ export default function WatchPage({ idOverride } = {}) {
           onPause={handlePause}
           onLoadStart={() => syncMediaLoadState({
             isLoading: !isAudioOnlyPlayback && !!videoSrc,
-            label: videoSrc?.endsWith('.m3u8') ? 'Starting stream' : 'Loading',
+            label: isHlsVideo ? 'Starting stream' : 'Loading',
           })}
           onLoadedMetadata={() => syncMediaLoadState({
             isLoading: !isAudioOnlyPlayback && !!videoSrc,
-            label: videoSrc?.endsWith('.m3u8') ? 'Buffering stream' : 'Loading',
+            label: isHlsVideo ? 'Buffering stream' : 'Loading',
           })}
           onProgress={() => syncMediaLoadState()}
           onCanPlay={() => syncMediaLoadState({ isLoading: false, label: 'Ready' })}

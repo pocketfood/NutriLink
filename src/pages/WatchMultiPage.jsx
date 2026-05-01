@@ -17,6 +17,7 @@ import PlaybackGlyph from '../components/PlaybackGlyph';
 import { nextMediaLoadState } from '../utils/mediaLoading';
 import { isXPostUrl, resolveXVideo } from '../utils/xPost';
 import { getTwitterPostText, getUserDisplayDescription, isSameDescription } from '../utils/twitterMetadata';
+import { isHlsUrl } from '../utils/mediaUrls';
 
 function formatClockTime(seconds = 0) {
   const safeSeconds = Math.max(0, Math.round(seconds));
@@ -218,7 +219,7 @@ export default function WatchMultiPage({ idOverride } = {}) {
 
       if (isAudioItem(vid)) {
         if (mediaSrc) video.src = mediaSrc;
-      } else if (mediaUrl.endsWith('.m3u8')) {
+      } else if (isHlsUrl(mediaUrl)) {
         if (Hls.isSupported()) {
           const hls = new Hls({
             xhrSetup: (xhr, url) => {
@@ -1064,6 +1065,7 @@ export default function WatchMultiPage({ idOverride } = {}) {
         const isTwitter = isTwitterItem(vid);
         const twitterSourceUrl = getTwitterSourceUrl(vid);
         const mediaUrl = getPlayableMediaUrl(vid);
+        const isHlsMedia = isHlsUrl(mediaUrl);
         const isAudio = isAudioItem(vid);
         const isPlaying = !!playingStates[index];
         const isLooping = loopStates[index] ?? !!vid.loop;
@@ -1091,16 +1093,16 @@ export default function WatchMultiPage({ idOverride } = {}) {
                   muted={muted}
                   controls={false}
                   playsInline
-                  preload="auto"
+                  preload={isHlsMedia ? 'auto' : 'metadata'}
                   crossOrigin="anonymous"
                   poster={vid.poster || undefined}
                   onLoadStart={() => syncMediaLoadState(index, {
                     isLoading: !isAudio,
-                    label: mediaUrl?.endsWith('.m3u8') ? 'Starting stream' : 'Loading',
+                    label: isHlsMedia ? 'Starting stream' : 'Loading',
                   })}
                   onLoadedMetadata={() => syncMediaLoadState(index, {
                     isLoading: !isAudio,
-                    label: mediaUrl?.endsWith('.m3u8') ? 'Buffering stream' : 'Loading',
+                    label: isHlsMedia ? 'Buffering stream' : 'Loading',
                   })}
                   onProgress={() => syncMediaLoadState(index)}
                   onCanPlay={() => syncMediaLoadState(index, { isLoading: false, label: 'Ready' })}

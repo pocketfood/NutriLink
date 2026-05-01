@@ -14,6 +14,7 @@ import Multitrack from 'wavesurfer-multitrack';
 import Hls from 'hls.js';
 import MediaLoadingOverlay from '../components/MediaLoadingOverlay';
 import { nextMediaLoadState } from '../utils/mediaLoading';
+import { isHlsUrl } from '../utils/mediaUrls';
 
 const TRACK_COLORS = [
   { wave: 'rgba(127,176,255,0.7)', progress: '#4da2ff' },
@@ -271,14 +272,15 @@ export default function MultiTrackPage() {
     }
 
     const proxied = getMediaProxyUrl(src);
+    const isHlsPreview = isHlsUrl(src);
     setVideoError(null);
     setVideoLoadState({
       isLoading: true,
       loadedPercent: null,
-      label: proxied.endsWith('.m3u8') ? 'Starting stream' : 'Loading',
+      label: isHlsPreview ? 'Starting stream' : 'Loading',
     });
 
-    if (proxied.endsWith('.m3u8')) {
+    if (isHlsPreview) {
       if (Hls.isSupported()) {
         const hls = new Hls({
           xhrSetup: (xhr, url) => {
@@ -286,7 +288,7 @@ export default function MultiTrackPage() {
           },
           fetchSetup: (context, init) => new Request(getMediaProxyUrl(context.url), init),
         });
-        hls.loadSource(proxied);
+        hls.loadSource(src);
         hls.attachMedia(video);
         hls.on(Hls.Events.ERROR, (event, data) => {
           if (data.fatal) {
@@ -305,7 +307,7 @@ export default function MultiTrackPage() {
         });
         videoHlsRef.current = hls;
       } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-        video.src = proxied;
+        video.src = src;
       } else {
         setVideoError('HLS preview is not supported in this browser.');
       }
@@ -801,16 +803,16 @@ export default function MultiTrackPage() {
             <video
               ref={videoRef}
               playsInline
-              preload="auto"
+              preload={isHlsUrl(videoUrl) ? 'auto' : 'metadata'}
               crossOrigin="anonymous"
               muted={videoMuted}
               onLoadStart={() => syncVideoLoadState({
                 isLoading: true,
-                label: videoUrl.trim().endsWith('.m3u8') ? 'Starting stream' : 'Loading',
+                label: isHlsUrl(videoUrl) ? 'Starting stream' : 'Loading',
               })}
               onLoadedMetadata={() => syncVideoLoadState({
                 isLoading: true,
-                label: videoUrl.trim().endsWith('.m3u8') ? 'Buffering stream' : 'Loading',
+                label: isHlsUrl(videoUrl) ? 'Buffering stream' : 'Loading',
               })}
               onProgress={() => syncVideoLoadState()}
               onCanPlay={() => syncVideoLoadState({ isLoading: false, label: 'Ready' })}
