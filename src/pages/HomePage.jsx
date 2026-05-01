@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { isXPostUrl, resolveXVideo } from '../utils/xPost';
+import { getTwitterPostText, getUserDisplayDescription } from '../utils/twitterMetadata';
 
 const BLOB_BASE_URL = 'https://ogoyhmlvdwypuizr.public.blob.vercel-storage.com/videos';
 const NUTRILINK_HOSTS = new Set(['nutrilink-xi.vercel.app', 'www.nutrilink-xi.vercel.app']);
@@ -147,16 +148,19 @@ function HomePage() {
       const items = payloads
         .flatMap((payload) => normalizeSavedItems(payload))
         .map((item) => {
+          const isTwitterItem = item.type === 'twitter' || item.source === 'x' || isXPostUrl(item.sourceUrl);
+          const twitterPostText = isTwitterItem ? getTwitterPostText(item) : '';
           const nextDescription =
             importedDescription ||
-            item.userDescription ||
-            (item.type === 'twitter' && (item.sourceDescription || item.tweetText) ? '' : item.description || '');
+            getUserDisplayDescription(item, isTwitterItem);
 
           return {
             ...item,
             filename: importedFilename || item.filename || '',
             description: nextDescription,
             userDescription: nextDescription,
+            sourceDescription: isTwitterItem ? item.sourceDescription || twitterPostText : item.sourceDescription,
+            tweetText: isTwitterItem ? item.tweetText || twitterPostText : item.tweetText,
           };
         });
 

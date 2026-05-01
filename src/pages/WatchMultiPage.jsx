@@ -16,6 +16,7 @@ import MediaLoadingOverlay from '../components/MediaLoadingOverlay';
 import PlaybackGlyph from '../components/PlaybackGlyph';
 import { nextMediaLoadState } from '../utils/mediaLoading';
 import { isXPostUrl, resolveXVideo } from '../utils/xPost';
+import { getTwitterPostText, getUserDisplayDescription, isSameDescription } from '../utils/twitterMetadata';
 
 function formatClockTime(seconds = 0) {
   const safeSeconds = Math.max(0, Math.round(seconds));
@@ -104,9 +105,9 @@ export default function WatchMultiPage({ idOverride } = {}) {
       current.map((item, itemIndex) => {
         if (itemIndex !== index) return item;
 
-        const currentDescription = item.userDescription ?? item.description ?? '';
+        const currentDescription = getUserDisplayDescription(item, true);
         const userDescription =
-          currentDescription && currentDescription !== resolved.description ? currentDescription : '';
+          currentDescription && !isSameDescription(currentDescription, resolved.description) ? currentDescription : '';
 
         return {
           ...item,
@@ -1067,12 +1068,8 @@ export default function WatchMultiPage({ idOverride } = {}) {
         const isPlaying = !!playingStates[index];
         const isLooping = loopStates[index] ?? !!vid.loop;
         const downloadUrl = mediaUrl || twitterSourceUrl;
-        const twitterPostText = isTwitter
-          ? vid.sourceDescription || vid.tweetText || (!vid.userDescription ? vid.description : '')
-          : '';
-        const displayDescription =
-          vid.userDescription ??
-          (isTwitter && !vid.sourceDescription && !vid.tweetText ? '' : vid.description || '');
+        const twitterPostText = isTwitter ? getTwitterPostText(vid) : '';
+        const displayDescription = getUserDisplayDescription(vid, isTwitter);
         return (
           <div
             key={index}

@@ -18,6 +18,7 @@ import MediaLoadingOverlay from '../components/MediaLoadingOverlay';
 import PlaybackGlyph from '../components/PlaybackGlyph';
 import { nextMediaLoadState } from '../utils/mediaLoading';
 import { isXPostUrl, resolveXVideo } from '../utils/xPost';
+import { getTwitterPostText, getUserDisplayDescription, isSameDescription } from '../utils/twitterMetadata';
 
 const STUDIO_TRACK_COLORS = [
   { wave: 'rgba(127,176,255,0.7)', progress: '#4da2ff' },
@@ -206,18 +207,14 @@ export default function WatchPage({ idOverride } = {}) {
   const videoSrc = hasStudioVideo ? getMediaProxyUrl(videoData.videoUrl) : mixUrl ? null : mediaSrc;
   const primaryMediaRef = mixUrl ? audioRef : videoRef;
   const downloadUrl = mixUrl || videoData?.videoUrl || (isXPostUrl(videoData?.url) ? null : videoData?.url) || twitterSourceUrl;
-  const twitterPostText = isTwitterVideo
-    ? videoData?.sourceDescription || videoData?.tweetText || (!videoData?.userDescription ? videoData?.description : '')
-    : '';
-  const displayDescription =
-    videoData?.userDescription ??
-    (isTwitterVideo && !videoData?.sourceDescription && !videoData?.tweetText ? '' : videoData?.description || '');
+  const twitterPostText = isTwitterVideo ? getTwitterPostText(videoData) : '';
+  const displayDescription = getUserDisplayDescription(videoData, isTwitterVideo);
 
   const applyResolvedTwitterVideo = useCallback((resolved) => {
     setVideoData((current) => {
-      const currentDescription = current?.userDescription ?? current?.description ?? '';
+      const currentDescription = getUserDisplayDescription(current, true);
       const userDescription =
-        currentDescription && currentDescription !== resolved.description ? currentDescription : '';
+        currentDescription && !isSameDescription(currentDescription, resolved.description) ? currentDescription : '';
 
       return {
         ...current,
