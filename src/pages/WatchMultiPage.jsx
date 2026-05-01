@@ -102,28 +102,35 @@ export default function WatchMultiPage({ idOverride } = {}) {
 
   const applyResolvedTwitterVideo = useCallback((index, resolved) => {
     setVideoData((current) =>
-      current.map((item, itemIndex) =>
-        itemIndex === index
-          ? {
-              ...item,
-              type: 'twitter',
-              source: resolved.source,
-              sourceUrl: resolved.sourceUrl || item.sourceUrl,
-              tweetId: resolved.tweetId,
-              url: resolved.videoUrl,
-              videoUrl: resolved.videoUrl,
-              poster: resolved.poster,
-              width: resolved.width,
-              height: resolved.height,
-              durationMs: resolved.durationMs,
-              username: resolved.username,
-              name: resolved.name,
-              profileImage: resolved.profileImage,
-              description: resolved.description || item.description || '',
-              possiblySensitive: resolved.possiblySensitive,
-            }
-          : item
-      )
+      current.map((item, itemIndex) => {
+        if (itemIndex !== index) return item;
+
+        const currentDescription = item.userDescription ?? item.description ?? '';
+        const userDescription =
+          currentDescription && currentDescription !== resolved.description ? currentDescription : '';
+
+        return {
+          ...item,
+          type: 'twitter',
+          source: resolved.source,
+          sourceUrl: resolved.sourceUrl || item.sourceUrl,
+          tweetId: resolved.tweetId,
+          url: resolved.videoUrl,
+          videoUrl: resolved.videoUrl,
+          poster: resolved.poster,
+          width: resolved.width,
+          height: resolved.height,
+          durationMs: resolved.durationMs,
+          username: resolved.username,
+          name: resolved.name,
+          profileImage: resolved.profileImage,
+          description: userDescription,
+          userDescription,
+          sourceDescription: resolved.description || item.sourceDescription || '',
+          tweetText: resolved.description || item.tweetText || '',
+          possiblySensitive: resolved.possiblySensitive,
+        };
+      })
     );
   }, []);
 
@@ -1061,6 +1068,12 @@ export default function WatchMultiPage({ idOverride } = {}) {
         const isPlaying = !!playingStates[index];
         const isLooping = loopStates[index] ?? !!vid.loop;
         const downloadUrl = mediaUrl || twitterSourceUrl;
+        const twitterPostText = isTwitter
+          ? vid.sourceDescription || vid.tweetText || (!vid.userDescription ? vid.description : '')
+          : '';
+        const displayDescription =
+          vid.userDescription ??
+          (isTwitter && !vid.sourceDescription && !vid.tweetText ? '' : vid.description || '');
         return (
           <div
             key={index}
@@ -1178,8 +1191,8 @@ export default function WatchMultiPage({ idOverride } = {}) {
                 }}
               >
                 {vid.filename && <h3 style={{ margin: 0, fontSize: '1.25rem' }}>{vid.filename}</h3>}
-                {vid.description && (
-                  <p style={{ margin: '0.5rem 0 0', fontSize: '0.9rem', color: '#ccc' }}>{vid.description}</p>
+                {displayDescription && (
+                  <p style={{ margin: '0.5rem 0 0', fontSize: '0.9rem', color: '#ccc' }}>{displayDescription}</p>
                 )}
               </div>
             )}
@@ -1187,8 +1200,8 @@ export default function WatchMultiPage({ idOverride } = {}) {
             {showInfo && (
               <div style={infoCardStyle}>
                 <div style={{ fontWeight: 700, fontSize: '1rem' }}>{vid.filename || 'Untitled'}</div>
-                {vid.description && (
-                  <div style={{ marginTop: '0.35rem', color: '#cfe2ff' }}>{vid.description}</div>
+                {displayDescription && (
+                  <div style={{ marginTop: '0.35rem', color: '#cfe2ff' }}>{displayDescription}</div>
                 )}
                 <div style={{ marginTop: '0.6rem', fontSize: '0.82rem', color: '#d6e5ff' }}>
                   {isTwitter ? (
@@ -1196,6 +1209,11 @@ export default function WatchMultiPage({ idOverride } = {}) {
                       <div style={{ marginBottom: '0.35rem' }}>
                         <span style={{ fontWeight: 600 }}>Source:</span> X/Twitter
                       </div>
+                      {twitterPostText && (
+                        <div style={{ marginBottom: '0.35rem' }}>
+                          <span style={{ fontWeight: 600 }}>Post:</span> {twitterPostText}
+                        </div>
+                      )}
                       {(vid.username || vid.name) && (
                         <div style={{ marginBottom: '0.35rem' }}>
                           <span style={{ fontWeight: 600 }}>Author:</span>{' '}

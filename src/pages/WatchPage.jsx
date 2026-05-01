@@ -207,26 +207,41 @@ export default function WatchPage({ idOverride } = {}) {
   const videoSrc = hasStudioVideo ? getMediaProxyUrl(videoData.videoUrl) : mixUrl ? null : mediaSrc;
   const primaryMediaRef = mixUrl ? audioRef : videoRef;
   const downloadUrl = mixUrl || videoData?.videoUrl || (isXPostUrl(videoData?.url) ? null : videoData?.url) || twitterSourceUrl;
+  const twitterPostText = isTwitterVideo
+    ? videoData?.sourceDescription || videoData?.tweetText || (!videoData?.userDescription ? videoData?.description : '')
+    : '';
+  const displayDescription =
+    videoData?.userDescription ??
+    (isTwitterVideo && !videoData?.sourceDescription && !videoData?.tweetText ? '' : videoData?.description || '');
 
   const applyResolvedTwitterVideo = useCallback((resolved) => {
-    setVideoData((current) => ({
-      ...current,
-      type: 'twitter',
-      source: resolved.source,
-      sourceUrl: resolved.sourceUrl || current?.sourceUrl,
-      tweetId: resolved.tweetId,
-      url: resolved.videoUrl,
-      videoUrl: resolved.videoUrl,
-      poster: resolved.poster,
-      width: resolved.width,
-      height: resolved.height,
-      durationMs: resolved.durationMs,
-      username: resolved.username,
-      name: resolved.name,
-      profileImage: resolved.profileImage,
-      description: resolved.description || current?.description || '',
-      possiblySensitive: resolved.possiblySensitive,
-    }));
+    setVideoData((current) => {
+      const currentDescription = current?.userDescription ?? current?.description ?? '';
+      const userDescription =
+        currentDescription && currentDescription !== resolved.description ? currentDescription : '';
+
+      return {
+        ...current,
+        type: 'twitter',
+        source: resolved.source,
+        sourceUrl: resolved.sourceUrl || current?.sourceUrl,
+        tweetId: resolved.tweetId,
+        url: resolved.videoUrl,
+        videoUrl: resolved.videoUrl,
+        poster: resolved.poster,
+        width: resolved.width,
+        height: resolved.height,
+        durationMs: resolved.durationMs,
+        username: resolved.username,
+        name: resolved.name,
+        profileImage: resolved.profileImage,
+        description: userDescription,
+        userDescription,
+        sourceDescription: resolved.description || current?.sourceDescription || '',
+        tweetText: resolved.description || current?.tweetText || '',
+        possiblySensitive: resolved.possiblySensitive,
+      };
+    });
   }, []);
 
   useEffect(() => {
@@ -1328,8 +1343,8 @@ export default function WatchPage({ idOverride } = {}) {
           style={infoCardStyle}
         >
           <div style={{ fontWeight: 700, fontSize: '1rem' }}>{videoData.filename || 'Untitled'}</div>
-          {videoData.description && (
-            <div style={{ marginTop: '0.35rem', color: '#cfe2ff' }}>{videoData.description}</div>
+          {displayDescription && (
+            <div style={{ marginTop: '0.35rem', color: '#cfe2ff' }}>{displayDescription}</div>
           )}
           <div style={{ marginTop: '0.6rem', fontSize: '0.82rem', color: '#d6e5ff' }}>
             {isTwitterVideo ? (
@@ -1337,6 +1352,11 @@ export default function WatchPage({ idOverride } = {}) {
                 <div style={{ marginBottom: '0.35rem' }}>
                   <span style={{ fontWeight: 600 }}>Source:</span> X/Twitter
                 </div>
+                {twitterPostText && (
+                  <div style={{ marginBottom: '0.35rem' }}>
+                    <span style={{ fontWeight: 600 }}>Post:</span> {twitterPostText}
+                  </div>
+                )}
                 {(videoData.username || videoData.name) && (
                   <div style={{ marginBottom: '0.35rem' }}>
                     <span style={{ fontWeight: 600 }}>Author:</span>{' '}
@@ -1448,8 +1468,8 @@ export default function WatchPage({ idOverride } = {}) {
 
       <div style={titleBlockStyle}>
         {videoData.filename && <h3 style={{ margin: 0, fontSize: '1.25rem' }}>{videoData.filename}</h3>}
-        {videoData.description && (
-          <p style={{ margin: '0.5rem 0 0', fontSize: '0.9rem', color: '#ccc' }}>{videoData.description}</p>
+        {displayDescription && (
+          <p style={{ margin: '0.5rem 0 0', fontSize: '0.9rem', color: '#ccc' }}>{displayDescription}</p>
         )}
       </div>
       {showQR && (
