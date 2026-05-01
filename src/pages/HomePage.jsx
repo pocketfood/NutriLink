@@ -2,6 +2,85 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { isXPostUrl, resolveXVideo } from '../utils/xPost';
 
+const BLOB_BASE_URL = 'https://ogoyhmlvdwypuizr.public.blob.vercel-storage.com/videos';
+const NUTRILINK_HOSTS = new Set(['nutrilink-xi.vercel.app', 'www.nutrilink-xi.vercel.app']);
+const NUTRILINK_ID_PATTERN = /^[a-z0-9_-]{2,128}$/i;
+
+function getCurrentOrigin() {
+  return typeof window !== 'undefined' ? window.location.origin : 'https://nutrilink-xi.vercel.app';
+}
+
+function getNutriLinkReference(value) {
+  if (!value || typeof value !== 'string') return null;
+
+  try {
+    const parsed = new URL(value, getCurrentOrigin());
+    const host = parsed.hostname.toLowerCase();
+    const currentHost = typeof window !== 'undefined' ? window.location.hostname.toLowerCase() : '';
+    const isKnownHost = NUTRILINK_HOSTS.has(host) || (currentHost && host === currentHost);
+
+    if (!isKnownHost) return null;
+
+    const pathParts = parsed.pathname.split('/').filter(Boolean);
+    const route = pathParts[0];
+    if (route !== 'v' && route !== 'm') return null;
+
+    const ids = pathParts
+      .slice(1)
+      .join('/')
+      .split(/[,/]+/)
+      .map((part) => part.trim())
+      .filter(Boolean);
+
+    if (!ids.length || ids.some((id) => !NUTRILINK_ID_PATTERN.test(id))) return null;
+
+    return { route, ids };
+  } catch {
+    return null;
+  }
+}
+
+function parseUrlInputs(value) {
+  return value
+    .split(/\n+/)
+    .flatMap((line) => {
+      const trimmed = line.trim();
+      if (!trimmed) return [];
+      if (getNutriLinkReference(trimmed)) return [trimmed];
+      return trimmed.split(',').map((part) => part.trim()).filter(Boolean);
+    });
+}
+
+async function fetchSavedNutriLink(id) {
+  const res = await fetch(`${BLOB_BASE_URL}/${encodeURIComponent(id)}.json`);
+  if (res.status === 404) throw new Error(`NutriLink ${id} was not found`);
+  if (!res.ok) throw new Error(`Could not load NutriLink ${id}`);
+  return res.json();
+}
+
+function normalizeSavedItems(payload) {
+  if (!payload) return [];
+
+  const payloadType = payload.type;
+  const rawItems = Array.isArray(payload.videos)
+    ? payload.videos
+    : payload.url || payload.videoUrl
+      ? [payload]
+      : [];
+
+  return rawItems
+    .filter(Boolean)
+    .map((item) => {
+      const mediaUrl = item.url || item.videoUrl;
+      return {
+        ...item,
+        url: mediaUrl,
+        type: item.type || payloadType || 'video',
+      };
+    })
+    .filter((item) => item.url);
+}
+
 function HomePage() {
   const [mode, setMode] = useState('video');
   const [url, setUrl] = useState('');
@@ -23,7 +102,7 @@ function HomePage() {
     setLoading(true);
 
     const id = Math.random().toString(36).substring(2, 8);
-    const urls = url.split(/[\n,]+/).map((s) => s.trim()).filter(Boolean);
+    const urls = parseUrlInputs(url);
     if (!urls.length) {
       setLoading(false);
       return;
@@ -58,10 +137,48 @@ function HomePage() {
       };
     };
 
-    try {
-      const items = await Promise.all(urls.map((u) => resolveItem(u)));
+    const resolveNutriLinkItems = async (inputUrl) => {
+      const reference = getNutriLinkReference(inputUrl);
+      if (!reference) return null;
 
-      const payload = urls.length === 1
+      const payloads = await Promise.all(reference.ids.map((savedId) => fetchSavedNutriLink(savedId)));
+      const importedDescription = description.trim();
+      const importedFilename = filename.trim();
+      const items = payloads
+        .flatMap((payload) => normalizeSavedItems(payload))
+        .map((item) => {
+          const nextDescription =
+            importedDescription ||
+            item.userDescription ||
+            (item.type === 'twitter' && (item.sourceDescription || item.tweetText) ? '' : item.description || '');
+
+          return {
+            ...item,
+            filename: importedFilename || item.filename || '',
+            description: nextDescription,
+            userDescription: nextDescription,
+          };
+        });
+
+      if (!items.length) throw new Error('That NutriLink does not contain any playable videos');
+      return items;
+    };
+
+    const resolveInput = async (inputUrl) => {
+      if (mode === 'video') {
+        const importedItems = await resolveNutriLinkItems(inputUrl);
+        if (importedItems) return importedItems;
+      }
+
+      return [await resolveItem(inputUrl)];
+    };
+
+    try {
+      const items = (await Promise.all(urls.map((u) => resolveInput(u)))).flat();
+      if (!items.length) throw new Error('No playable links were found');
+
+      const isSingle = items.length === 1;
+      const payload = isSingle
         ? { id, ...items[0], volume, loop, type: items[0].type || mode }
         : {
             id,
@@ -80,7 +197,7 @@ function HomePage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Upload failed');
 
-      navigate(urls.length === 1 ? `/v/${id}` : `/m/${id}`);
+      navigate(isSingle ? `/v/${id}` : `/m/${id}`);
     } catch (err) {
       alert('Error saving content: ' + err.message);
     } finally {
@@ -174,7 +291,7 @@ function HomePage() {
           <textarea
             placeholder={mode === 'audio'
               ? 'Paste audio URL(s). Use one per line or separate with commas.'
-              : 'Paste video or X post URL(s). Use one per line or separate with commas.'}
+              : 'Paste video, X post, or NutriLink URL(s). Use one per line or separate with commas.'}
             value={url}
             onChange={(e) => setUrl(e.target.value)}
             rows={4}
@@ -290,8 +407,8 @@ function HomePage() {
           <div style={{ marginTop: '2rem', fontSize: '14px', color: '#444' }}>
             <ol style={{ textAlign: 'left', display: 'inline-block', lineHeight: '1.6' }}>
               <li>
-                <strong>{mode === 'audio' ? 'Paste a direct audio link' : 'Paste video links or X post links'}</strong>
-                {' '}(e.g. {mode === 'audio' ? 'MP3' : 'MP4 or x.com/status/...'})
+                <strong>{mode === 'audio' ? 'Paste a direct audio link' : 'Paste video links, X post links, or NutriLinks'}</strong>
+                {' '}(e.g. {mode === 'audio' ? 'MP3' : 'MP4, x.com/status/..., or /v/abc123'})
               </li>
               <li><strong>Use commas or new lines to separate multiple links</strong></li>
               <li><strong>Enter title & description</strong></li>
