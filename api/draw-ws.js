@@ -159,6 +159,7 @@ function normalizeImage(message) {
     id: value.id,
     url: value.url,
     name: normalizeName(value.name || 'Image'),
+    layer: value.layer === 'background' ? 'background' : 'top',
     x,
     y,
     width,

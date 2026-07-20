@@ -91,14 +91,6 @@ function getInitialImageSize(dimensions) {
   };
 }
 
-function getViewportSize(element) {
-  const rect = element?.getBoundingClientRect?.();
-  return {
-    width: Math.max(1, Number(window.innerWidth) || rect?.width || 1),
-    height: Math.max(1, Number(window.innerHeight) || rect?.height || 1),
-  };
-}
-
 function DrawPage() {
   const { roomId: routeRoomId } = useParams();
   const navigate = useNavigate();
@@ -122,6 +114,7 @@ function DrawPage() {
   const [cursors, setCursors] = useState({});
   const [images, setImages] = useState({});
   const [selectedImageId, setSelectedImageId] = useState(null);
+  const [imageContextMenu, setImageContextMenu] = useState(null);
   const [clientId] = useState(createClientId);
   const stageRef = useRef(null);
   const canvasRef = useRef(null);
@@ -148,20 +141,19 @@ function DrawPage() {
     if (!canvas) return;
     const context = canvas.getContext('2d');
     if (!context) return;
-    const size = getViewportSize(stageRef.current || canvas);
-    context.clearRect(0, 0, size.width, size.height);
+    const rect = canvas.getBoundingClientRect();
+    context.clearRect(0, 0, rect.width, rect.height);
     context.lineCap = 'round';
     context.lineJoin = 'round';
-    const brushScale = clamp(Math.min(size.width, size.height) / 720, 0.5, 1);
 
     strokesRef.current.forEach((stroke) => {
       if (!stroke.points?.length) return;
       context.strokeStyle = stroke.color;
-      context.lineWidth = clamp(Number(stroke.size) || 3, 1, 12) * brushScale;
+      context.lineWidth = clamp(Number(stroke.size) || 3, 1, 12);
       context.beginPath();
       stroke.points.forEach((point, index) => {
-        const x = point.x * size.width;
-        const y = point.y * size.height;
+        const x = point.x * rect.width;
+        const y = point.y * rect.height;
         if (index === 0) context.moveTo(x, y);
         else context.lineTo(x, y);
       });
@@ -173,9 +165,9 @@ function DrawPage() {
     const ratio = window.devicePixelRatio || 1;
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const size = getViewportSize(stageRef.current || canvas);
-    canvas.width = Math.max(1, Math.round(size.width * ratio));
-    canvas.height = Math.max(1, Math.round(size.height * ratio));
+    const rect = canvas.getBoundingClientRect();
+    canvas.width = Math.max(1, Math.round(rect.width * ratio));
+    canvas.height = Math.max(1, Math.round(rect.height * ratio));
     canvas.getContext('2d')?.setTransform(ratio, 0, 0, ratio, 0, 0);
     redraw();
   }, [redraw]);
@@ -205,6 +197,7 @@ function DrawPage() {
     pendingImageUpdateRef.current = {
       type: 'image:update',
       id: image.id,
+      layer: image.layer,
       x: image.x,
       y: image.y,
       width: image.width,
@@ -229,6 +222,7 @@ function DrawPage() {
     send({
       type: 'image:update',
       id: image.id,
+      layer: image.layer,
       x: image.x,
       y: image.y,
       width: image.width,
@@ -237,10 +231,12 @@ function DrawPage() {
   };
 
   const getPoint = (event) => {
-    const size = getViewportSize(stageRef.current || canvasRef.current);
+    const canvas = canvasRef.current;
+    if (!canvas) return null;
+    const rect = canvas.getBoundingClientRect();
     return {
-      x: Math.min(1, Math.max(0, event.clientX / size.width)),
-      y: Math.min(1, Math.max(0, event.clientY / size.height)),
+      x: Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width)),
+      y: Math.min(1, Math.max(0, (event.clientY - rect.top) / rect.height)),
     };
   };
 
@@ -389,6 +385,7 @@ function DrawPage() {
   };
 
   const handlePointerDown = (event) => {
+    setImageContextMenu(null);
     if (toolMode !== 'draw') {
       setToolMode('draw');
       setSelectedImageId(null);
@@ -447,7 +444,9 @@ function DrawPage() {
 
   const handleImagePointerDown = (event, image, mode = 'move') => {
     if (connectionState !== 'connected') return;
+    if (event.button !== 0) return;
     event.stopPropagation();
+    setImageContextMenu(null);
     event.currentTarget.setPointerCapture?.(event.pointerId);
     const point = getPoint(event);
     if (!point) return;
@@ -461,6 +460,20 @@ function DrawPage() {
       initial: { ...image },
       captureTarget: event.currentTarget,
     };
+  };
+
+  const handleImageContextMenu = (event, image) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setToolMode('select');
+    setSelectedImageId(image.id);
+    setImageContextMenu({ id: image.id, x: event.clientX, y: event.clientY });
+  };
+
+  const setImageLayer = (id, layer) => {
+    if (!imagesRef.current[id]) return;
+    updateLocalImage(id, { layer: layer === 'background' ? 'background' : 'top' });
+    setImageContextMenu(null);
   };
 
   const handleImagePointerMove = (event) => {
@@ -564,6 +577,7 @@ function DrawPage() {
             y,
             width: size.width,
             height: size.height,
+            layer: 'top',
           },
         });
       }
@@ -591,6 +605,7 @@ function DrawPage() {
     strokesRef.current = [];
     replaceImages({});
     setSelectedImageId(null);
+    setImageContextMenu(null);
     redraw();
     send({ type: 'clear' });
   };
@@ -635,6 +650,7 @@ function DrawPage() {
   return (
     <div
       style={pageStyle}
+      onPointerDown={() => setImageContextMenu(null)}
       onDragOver={(event) => {
         event.preventDefault();
         setIsDragOver(true);
@@ -769,15 +785,6 @@ function DrawPage() {
         <canvas
           ref={canvasRef}
           aria-hidden="true"
-          style={{
-            ...canvasStyle,
-            zIndex: 1,
-            pointerEvents: 'none',
-          }}
-        />
-
-        <div
-          aria-hidden="true"
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
           onPointerUp={finishStroke}
@@ -790,8 +797,8 @@ function DrawPage() {
           }}
           onPointerLeave={handlePointerLeave}
           style={{
-            ...drawSurfaceStyle,
-            zIndex: toolMode === 'draw' ? 4 : 0,
+            ...canvasStyle,
+            zIndex: 2,
             pointerEvents: toolMode === 'draw' ? 'auto' : 'none',
           }}
         />
@@ -803,7 +810,7 @@ function DrawPage() {
           onPointerLeave={() => handleCursorLeave('move')}
           style={{
             ...cursorSurfaceStyle,
-            zIndex: toolMode === 'draw' ? 0 : 1.5,
+            zIndex: 0,
             pointerEvents: toolMode === 'draw' ? 'none' : 'auto',
           }}
         />
@@ -817,6 +824,7 @@ function DrawPage() {
               tabIndex={0}
               aria-label={`Move ${image.name || 'image'}`}
               onPointerDown={(event) => handleImagePointerDown(event, image)}
+              onContextMenu={(event) => handleImageContextMenu(event, image)}
               onPointerEnter={handleImagePointerMove}
               onPointerMove={handleImagePointerMove}
               onPointerLeave={() => handleCursorLeave('move')}
@@ -824,7 +832,7 @@ function DrawPage() {
               onPointerCancel={finishImageInteraction}
               style={{
                 ...imageFrameStyle,
-                zIndex: 2,
+                zIndex: image.layer === 'background' ? 1 : 3,
                 pointerEvents: toolMode === 'select' ? 'auto' : 'none',
                 left: `${image.x * 100}%`,
                 top: `${image.y * 100}%`,
@@ -846,6 +854,25 @@ function DrawPage() {
             </div>
           );
         })}
+
+        {imageContextMenu && (
+          <div
+            style={{
+              ...imageContextMenuStyle,
+              left: `${Math.max(8, Math.min(imageContextMenu.x, window.innerWidth - 208))}px`,
+              top: `${Math.max(8, Math.min(imageContextMenu.y, window.innerHeight - 92))}px`,
+            }}
+            onPointerDown={(event) => event.stopPropagation()}
+            onContextMenu={(event) => event.preventDefault()}
+          >
+            <button type="button" onClick={() => setImageLayer(imageContextMenu.id, 'background')} style={contextMenuButtonStyle}>
+              Send to background
+            </button>
+            <button type="button" onClick={() => setImageLayer(imageContextMenu.id, 'top')} style={contextMenuButtonStyle}>
+              Bring to top
+            </button>
+          </div>
+        )}
 
         {Object.values(cursors).map((cursor) => (
           <div
@@ -1064,18 +1091,9 @@ const canvasStageStyle = {
 };
 
 const canvasStyle = {
-  position: 'absolute',
-  inset: 0,
   display: 'block',
   width: '100%',
   height: '100%',
-  touchAction: 'none',
-  cursor: 'crosshair',
-};
-
-const drawSurfaceStyle = {
-  position: 'absolute',
-  inset: 0,
   touchAction: 'none',
   cursor: 'crosshair',
 };
@@ -1085,6 +1103,32 @@ const cursorSurfaceStyle = {
   inset: 0,
   touchAction: 'none',
   cursor: 'default',
+};
+
+const imageContextMenuStyle = {
+  position: 'fixed',
+  zIndex: 60,
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '0.25rem',
+  minWidth: '200px',
+  padding: '0.35rem',
+  border: '1px solid #dbe3ef',
+  borderRadius: '8px',
+  background: '#fff',
+  boxShadow: '0 5px 20px rgba(0,0,0,0.2)',
+};
+
+const contextMenuButtonStyle = {
+  border: 0,
+  borderRadius: '5px',
+  padding: '0.5rem 0.6rem',
+  background: '#edf2fa',
+  color: '#17233a',
+  cursor: 'pointer',
+  fontSize: '0.75rem',
+  fontWeight: 700,
+  textAlign: 'left',
 };
 
 const imageFrameStyle = {
