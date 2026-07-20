@@ -58,6 +58,7 @@ export default function WatchPage({ idOverride } = {}) {
   const [needsUserStart, setNeedsUserStart] = useState(false);
   const [isCompactLayout, setIsCompactLayout] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
+  const [remoteViewerStatus, setRemoteViewerStatus] = useState('checking');
   const [mediaLoadState, setMediaLoadState] = useState({
     isLoading: false,
     loadedPercent: null,
@@ -412,6 +413,37 @@ export default function WatchPage({ idOverride } = {}) {
       }
     };
   }, [videoData, audioSrc, videoSrc, isAudioOnlyPlayback, isHlsVideo, playableMediaUrl]);
+
+  useEffect(() => {
+    if (!isRemoteViewer || !resolvedId) {
+      setRemoteViewerStatus('checking');
+      return undefined;
+    }
+
+    let cancelled = false;
+    let pollTimer;
+
+    const checkStatus = async () => {
+      try {
+        const response = await fetch(`/api/remote-viewer-status?id=${encodeURIComponent(resolvedId)}`, {
+          cache: 'no-store',
+        });
+        const result = await response.json();
+        if (cancelled) return;
+        setRemoteViewerStatus(result.active ? 'live' : 'expired');
+      } catch {
+        if (!cancelled) setRemoteViewerStatus('expired');
+      }
+
+      if (!cancelled) pollTimer = window.setTimeout(checkStatus, 15000);
+    };
+
+    checkStatus();
+    return () => {
+      cancelled = true;
+      window.clearTimeout(pollTimer);
+    };
+  }, [isRemoteViewer, resolvedId]);
 
   useEffect(() => {
     if (!useStudioPlayback || !studioWaveRef.current) {
@@ -1261,6 +1293,89 @@ export default function WatchPage({ idOverride } = {}) {
       return (
         <div style={{ textAlign: 'center', marginTop: '2rem', color: 'white' }}>
           <p>This read-only viewer link is invalid or has expired.</p>
+        </div>
+      );
+    }
+
+    if (remoteViewerStatus === 'expired') {
+      return (
+        <div
+          style={{
+            minHeight: '100vh',
+            background: 'radial-gradient(circle at top, #1f4ea8 0%, #0b1a2f 55%, #050b16 100%)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '2rem',
+            color: '#e9f1ff',
+            textAlign: 'center',
+          }}
+        >
+          <div
+            style={{
+              backgroundColor: 'rgba(6,16,32,0.85)',
+              border: '2px dashed #2f66d6',
+              borderRadius: '18px',
+              padding: '2rem',
+              maxWidth: '420px',
+              width: '100%',
+              boxShadow: '0 14px 30px rgba(0,0,0,0.35)',
+            }}
+          >
+            <div style={{ fontSize: '3rem', fontWeight: 800, letterSpacing: '2px', color: '#7fb0ff' }}>404</div>
+            <div style={{ fontSize: '1.05rem', marginTop: '0.4rem', color: '#cfe2ff' }}>
+              This live session has ended.
+            </div>
+            <p style={{ marginTop: '0.8rem', fontSize: '0.95rem', color: '#e9f1ff' }}>
+              The remote viewer is no longer available or has expired.
+            </p>
+            <Link
+              to="/"
+              style={{
+                display: 'inline-block',
+                marginTop: '1.1rem',
+                backgroundColor: '#1f4ea8',
+                color: '#fff',
+                padding: '0.6rem 1.2rem',
+                borderRadius: '999px',
+                textDecoration: 'none',
+                fontSize: '0.95rem',
+              }}
+            >
+              Back home
+            </Link>
+          </div>
+        </div>
+      );
+    }
+
+    if (remoteViewerStatus === 'checking') {
+      return (
+        <div
+          style={{
+            minHeight: '100vh',
+            background: 'radial-gradient(circle at top, #1f4ea8 0%, #0b1a2f 55%, #050b16 100%)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '2rem',
+            color: '#e9f1ff',
+            textAlign: 'center',
+          }}
+        >
+          <div
+            style={{
+              backgroundColor: 'rgba(6,16,32,0.85)',
+              border: '2px solid rgba(127,176,255,0.35)',
+              borderRadius: '18px',
+              padding: '2rem',
+              maxWidth: '420px',
+              width: '100%',
+              boxShadow: '0 14px 30px rgba(0,0,0,0.35)',
+            }}
+          >
+            <div style={{ fontSize: '1.05rem', color: '#cfe2ff' }}>Checking live session…</div>
+          </div>
         </div>
       );
     }
