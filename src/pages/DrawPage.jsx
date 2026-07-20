@@ -356,7 +356,6 @@ function DrawPage() {
   };
 
   const handlePointerDown = (event) => {
-    if (connectionState !== 'connected') return;
     if (toolMode !== 'draw') {
       setToolMode('draw');
       setSelectedImageId(null);
@@ -370,7 +369,7 @@ function DrawPage() {
   };
 
   const handlePointerMove = (event) => {
-    if (connectionState !== 'connected' || toolMode !== 'draw') return;
+    if (toolMode !== 'draw') return;
     const point = getPoint(event);
     if (!point) return;
     sendCursor(point);
@@ -389,10 +388,11 @@ function DrawPage() {
     const stroke = activeStrokeRef.current;
     activeStrokeRef.current = null;
     strokesRef.current = strokesRef.current.filter((item) => item !== stroke);
-    if (stroke.points.length > 1) {
-      strokesRef.current.push(stroke);
-      send({ type: 'stroke', ...stroke });
-    }
+    const completedStroke = stroke.points.length === 1
+      ? { ...stroke, points: [stroke.points[0], { ...stroke.points[0] }] }
+      : stroke;
+    strokesRef.current.push(completedStroke);
+    send({ type: 'stroke', ...completedStroke });
     redraw();
   };
 
@@ -693,6 +693,15 @@ function DrawPage() {
         <canvas
           ref={canvasRef}
           aria-hidden="true"
+          style={{
+            ...canvasStyle,
+            zIndex: 1,
+            pointerEvents: 'none',
+          }}
+        />
+
+        <div
+          aria-hidden="true"
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
           onPointerUp={finishStroke}
@@ -705,8 +714,8 @@ function DrawPage() {
           }}
           onPointerLeave={handlePointerLeave}
           style={{
-            ...canvasStyle,
-            zIndex: toolMode === 'draw' ? 3 : 1,
+            ...drawSurfaceStyle,
+            zIndex: toolMode === 'draw' ? 4 : 0,
             pointerEvents: toolMode === 'draw' ? 'auto' : 'none',
           }}
         />
@@ -944,6 +953,13 @@ const canvasStyle = {
   display: 'block',
   width: '100%',
   height: '100%',
+  touchAction: 'none',
+  cursor: 'crosshair',
+};
+
+const drawSurfaceStyle = {
+  position: 'absolute',
+  inset: 0,
   touchAction: 'none',
   cursor: 'crosshair',
 };
