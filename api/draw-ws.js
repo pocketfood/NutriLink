@@ -5,7 +5,6 @@ import { WebSocket, WebSocketServer } from 'ws';
 const rooms = new Map();
 const ROOM_PATTERN = /^[a-z0-9_-]{4,64}$/i;
 const STATE_PREFIX = 'draw-state';
-const LAYER_COUNT = 6;
 const MAX_STROKES = 5000;
 const MAX_IMAGES = 100;
 const MAX_POINTS_PER_STROKE = 600;
@@ -42,11 +41,6 @@ function statePath(roomId) {
   return `${STATE_PREFIX}/${roomId}.json`;
 }
 
-function normalizeLayer(value, fallback = 0) {
-  if (!Number.isFinite(Number(value))) return fallback;
-  return Math.round(clamp(Number(value), 0, LAYER_COUNT - 1));
-}
-
 function normalizePoint(point) {
   if (!point || !Number.isFinite(Number(point.x)) || !Number.isFinite(Number(point.y))) return null;
   return {
@@ -69,7 +63,7 @@ function normalizeStroke(message) {
     ? clamp(Number(message.size), 1, 40)
     : 4;
 
-  return { points, color, size, layer: normalizeLayer(message.layer) };
+  return { points, color, size };
 }
 
 async function readStreamText(stream) {
@@ -241,7 +235,6 @@ function normalizeImage(message) {
     y,
     width,
     height,
-    layer: normalizeLayer(value.layer),
   };
 }
 

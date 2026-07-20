@@ -3,7 +3,6 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 
 const ROOM_PATTERN = /^[a-z0-9_-]{4,64}$/i;
-const LAYER_COUNT = 6;
 const COLORS = ['#111827', '#e05252', '#2f7fe6', '#35a56a', '#9b59b6', '#f39c12'];
 const IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
 
@@ -106,7 +105,6 @@ function DrawPage() {
   const [isDragOver, setIsDragOver] = useState(false);
   const [uploadState, setUploadState] = useState('idle');
   const [toolMode, setToolMode] = useState('draw');
-  const [activeLayer, setActiveLayer] = useState(0);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [clientName, setClientName] = useState(getStoredName);
   const [nameDraft, setNameDraft] = useState(clientName);
@@ -115,7 +113,7 @@ function DrawPage() {
   const [images, setImages] = useState({});
   const [selectedImageId, setSelectedImageId] = useState(null);
   const [clientId] = useState(createClientId);
-  const canvasRefs = useRef([]);
+  const canvasRef = useRef(null);
   const fileInputRef = useRef(null);
   const socketRef = useRef(null);
   const clientNameRef = useRef(clientName);
@@ -135,42 +133,38 @@ function DrawPage() {
   }, []);
 
   const redraw = useCallback(() => {
-    canvasRefs.current.forEach((canvas, layer) => {
-      if (!canvas) return;
-      const context = canvas.getContext('2d');
-      if (!context) return;
-      const rect = canvas.getBoundingClientRect();
-      context.clearRect(0, 0, rect.width, rect.height);
-      context.lineCap = 'round';
-      context.lineJoin = 'round';
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const context = canvas.getContext('2d');
+    if (!context) return;
+    const rect = canvas.getBoundingClientRect();
+    context.clearRect(0, 0, rect.width, rect.height);
+    context.lineCap = 'round';
+    context.lineJoin = 'round';
 
-      strokesRef.current
-        .filter((stroke) => (stroke.layer || 0) === layer)
-        .forEach((stroke) => {
-          if (!stroke.points?.length) return;
-          context.strokeStyle = stroke.color;
-          context.lineWidth = stroke.size;
-          context.beginPath();
-          stroke.points.forEach((point, index) => {
-            const x = point.x * rect.width;
-            const y = point.y * rect.height;
-            if (index === 0) context.moveTo(x, y);
-            else context.lineTo(x, y);
-          });
-          context.stroke();
-        });
+    strokesRef.current.forEach((stroke) => {
+      if (!stroke.points?.length) return;
+      context.strokeStyle = stroke.color;
+      context.lineWidth = stroke.size;
+      context.beginPath();
+      stroke.points.forEach((point, index) => {
+        const x = point.x * rect.width;
+        const y = point.y * rect.height;
+        if (index === 0) context.moveTo(x, y);
+        else context.lineTo(x, y);
+      });
+      context.stroke();
     });
   }, []);
 
   const resizeCanvas = useCallback(() => {
     const ratio = window.devicePixelRatio || 1;
-    canvasRefs.current.forEach((canvas) => {
-      if (!canvas) return;
-      const rect = canvas.getBoundingClientRect();
-      canvas.width = Math.max(1, Math.round(rect.width * ratio));
-      canvas.height = Math.max(1, Math.round(rect.height * ratio));
-      canvas.getContext('2d')?.setTransform(ratio, 0, 0, ratio, 0, 0);
-    });
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    canvas.width = Math.max(1, Math.round(rect.width * ratio));
+    canvas.height = Math.max(1, Math.round(rect.height * ratio));
+    canvas.getContext('2d')?.setTransform(ratio, 0, 0, ratio, 0, 0);
     redraw();
   }, [redraw]);
 
@@ -214,7 +208,7 @@ function DrawPage() {
   };
 
   const getPoint = (event) => {
-    const canvas = canvasRefs.current[0];
+    const canvas = canvasRef.current;
     if (!canvas) return null;
     const rect = canvas.getBoundingClientRect();
     return {
@@ -369,7 +363,7 @@ function DrawPage() {
     if (!point) return;
     sendCursor(point);
     drawingRef.current = true;
-    activeStrokeRef.current = { points: [point], color, size: 4, layer: activeLayer };
+    activeStrokeRef.current = { points: [point], color, size: 4 };
   };
 
   const handlePointerMove = (event) => {
@@ -412,13 +406,13 @@ function DrawPage() {
     const point = getPoint(event);
     if (!point) return;
     setToolMode('select');
-    setActiveLayer(image.layer || 0);
     setSelectedImageId(image.id);
     imageInteractionRef.current = {
       id: image.id,
       mode,
       startPoint: point,
       initial: { ...image },
+      captureTarget: event.currentTarget,
     };
   };
 
@@ -447,11 +441,6 @@ function DrawPage() {
     if (width >= 0.04 && height >= 0.04) updateLocalImage(interaction.id, { width, height });
   };
 
-  const selectLayer = (layer) => {
-    setActiveLayer(layer);
-    if (selectedImageId) updateLocalImage(selectedImageId, { layer });
-  };
-
   const saveName = () => {
     const nextName = normalizeLocalName(nameDraft);
     try {
@@ -468,8 +457,9 @@ function DrawPage() {
   };
 
   const finishImageInteraction = (event) => {
-    if (!imageInteractionRef.current) return;
-    event.currentTarget.releasePointerCapture?.(event.pointerId);
+    const interaction = imageInteractionRef.current;
+    if (!interaction) return;
+    interaction.captureTarget?.releasePointerCapture?.(event.pointerId);
     imageInteractionRef.current = null;
   };
 
@@ -512,7 +502,6 @@ function DrawPage() {
             y,
             width: size.width,
             height: size.height,
-            layer: activeLayer,
           },
         });
       }
@@ -663,29 +652,6 @@ function DrawPage() {
           </div>
         </div>
 
-        <div style={settingsSectionStyle}>
-          <div style={settingsLabelStyle}>Active layer</div>
-          <div style={layerControlStyle} aria-label="Drawing layers">
-            {Array.from({ length: LAYER_COUNT }, (_, layer) => (
-              <button
-                key={layer}
-                type="button"
-                aria-label={`Layer ${layer + 1}`}
-                aria-pressed={activeLayer === layer}
-                onClick={() => selectLayer(layer)}
-                style={{
-                  ...layerButtonStyle,
-                  background: activeLayer === layer ? '#2f62cc' : '#edf2fa',
-                  color: activeLayer === layer ? '#fff' : '#17233a',
-                }}
-              >
-                {layer + 1}
-              </button>
-            ))}
-          </div>
-          <div style={settingsHintStyle}>{selectedImageId ? 'Selected image will move layers.' : 'New strokes use this layer.'}</div>
-        </div>
-
         <div style={settingsActionsStyle}>
           <button
             type="button"
@@ -732,14 +698,15 @@ function DrawPage() {
         }}
         onPointerLeave={handlePointerLeave}
       >
-        {Array.from({ length: LAYER_COUNT }, (_, layer) => (
-          <canvas
-            key={layer}
-            ref={(canvas) => { canvasRefs.current[layer] = canvas; }}
-            aria-hidden="true"
-            style={{ ...canvasStyle, zIndex: layer * 2 + 1 }}
-          />
-        ))}
+        <canvas
+          ref={canvasRef}
+          aria-hidden="true"
+          style={{
+            ...canvasStyle,
+            zIndex: toolMode === 'draw' ? 3 : 1,
+            pointerEvents: toolMode === 'draw' ? 'auto' : 'none',
+          }}
+        />
 
         {Object.values(images).map((image) => {
           const selected = image.id === selectedImageId;
@@ -755,7 +722,7 @@ function DrawPage() {
               onPointerCancel={finishImageInteraction}
               style={{
                 ...imageFrameStyle,
-                zIndex: (image.layer || 0) * 2,
+                zIndex: 2,
                 pointerEvents: toolMode === 'select' ? 'auto' : 'none',
                 left: `${image.x * 100}%`,
                 top: `${image.y * 100}%`,
@@ -1059,26 +1026,6 @@ const footerStyle = {
   fontSize: '0.68rem',
   textAlign: 'center',
   pointerEvents: 'none',
-};
-
-const layerControlStyle = {
-  display: 'inline-flex',
-  alignItems: 'center',
-  gap: '0.2rem',
-  padding: '0.15rem 0.25rem',
-  borderRadius: '6px',
-  background: '#f5f7fb',
-};
-
-const layerButtonStyle = {
-  width: '20px',
-  height: '20px',
-  padding: 0,
-  border: 0,
-  borderRadius: '4px',
-  cursor: 'pointer',
-  fontSize: '0.65rem',
-  fontWeight: 700,
 };
 
 const roomStatusPageStyle = {
