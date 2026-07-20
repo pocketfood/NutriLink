@@ -18,6 +18,7 @@ import { nextMediaLoadState } from '../utils/mediaLoading';
 import { isXPostUrl, resolveXVideo } from '../utils/xPost';
 import { getTwitterPostText, getUserDisplayDescription, isSameDescription } from '../utils/twitterMetadata';
 import { isHlsUrl } from '../utils/mediaUrls';
+import { sanitizeDownloadFilename, triggerDownload } from '../utils/download';
 
 function formatClockTime(seconds = 0) {
   const safeSeconds = Math.max(0, Math.round(seconds));
@@ -79,6 +80,7 @@ export default function WatchMultiPage({ idOverride } = {}) {
   const [loopStates, setLoopStates] = useState({});
   const [autoPlayNext, setAutoPlayNext] = useState(true);
   const [mediaLoadStates, setMediaLoadStates] = useState({});
+  const [downloadingIndex, setDownloadingIndex] = useState(null);
 
   const feedRef = useRef(null);
   const videoRefs = useRef([]);
@@ -796,6 +798,48 @@ export default function WatchMultiPage({ idOverride } = {}) {
     if (video) video.loop = nextLoop;
   };
 
+  const handleDownload = async (index) => {
+    if (downloadingIndex === index) return;
+
+    const item = videoData[index];
+    if (!item) return;
+
+    setDownloadingIndex(index);
+    try {
+      const twitterSourceUrl = getTwitterSourceUrl(item);
+      let resolvedDownloadUrl = getPlayableMediaUrl(item);
+
+      if (twitterSourceUrl) {
+        try {
+          const resolved = await resolveXVideo(twitterSourceUrl);
+          resolvedDownloadUrl = resolved.videoUrl;
+          applyResolvedTwitterVideo(index, resolved);
+        } catch (resolveError) {
+          if (!resolvedDownloadUrl) throw resolveError;
+        }
+      }
+
+      if (!resolvedDownloadUrl) {
+        throw new Error('No downloadable media is available for this link.');
+      }
+
+      const proxiedUrl = getMediaProxyUrl(resolvedDownloadUrl);
+      const extension = isAudioItem(item) ? 'mp3' : 'mp4';
+      const baseFilename = sanitizeDownloadFilename(
+        item.filename,
+        `nutrilink-${item.tweetId || index + 1}`
+      );
+      const filename = /\.[a-z0-9]{2,5}$/i.test(baseFilename)
+        ? baseFilename
+        : `${baseFilename}.${extension}`;
+      triggerDownload(proxiedUrl, filename);
+    } catch (downloadError) {
+      window.alert(downloadError instanceof Error ? downloadError.message : 'Download failed.');
+    } finally {
+      setDownloadingIndex(null);
+    }
+  };
+
   const toggleAutoPlayNext = () => {
     setAutoPlayNext((prev) => !prev);
   };
@@ -1112,7 +1156,6 @@ export default function WatchMultiPage({ idOverride } = {}) {
         const isAudio = isAudioItem(vid);
         const isPlaying = !!playingStates[index];
         const isLooping = loopStates[index] ?? !!vid.loop;
-        const downloadUrl = mediaUrl || twitterSourceUrl;
         const twitterPostText = isTwitter ? getTwitterPostText(vid) : '';
         const displayDescription = getUserDisplayDescription(vid, isTwitter);
         return (
@@ -1332,9 +1375,9 @@ export default function WatchMultiPage({ idOverride } = {}) {
                     <FaQrcode size={18} />
                   </div>
                   <div
-                    onClick={() => downloadUrl && window.open(downloadUrl, '_blank')}
+                    onClick={() => handleDownload(index)}
                     style={iconButtonStyle}
-                    title="Download"
+                    title={downloadingIndex === index ? 'Preparing download' : 'Download'}
                   >
                     <FaDownload size={18} />
                   </div>

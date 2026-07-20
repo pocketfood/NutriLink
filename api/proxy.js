@@ -24,6 +24,8 @@ const defaultAllowedHostEntries = [
   'twitter.com',
   'www.twitter.com',
   'mobile.twitter.com',
+  'sys.4chan.org',
+  'files.catbox.moe',
   'demo.unified-streaming.com',
   '*.cloudfront.net',
   '*.9cache.com',
@@ -88,6 +90,24 @@ function applyCors(res) {
 function getTargetUrl(req) {
   const requestUrl = new URL(req.url, `http://${req.headers.host}`);
   return requestUrl.searchParams.get('url');
+}
+
+function getDownloadFilename(req) {
+  const requestUrl = new URL(req.url, `http://${req.headers.host}`);
+  if (requestUrl.searchParams.get('download') !== '1') return null;
+
+  const requestedFilename = requestUrl.searchParams.get('filename') || 'nutrilink-download';
+  const safeFilename = requestedFilename
+    .replace(/[<>:"/\\|?*]/g, '_')
+    .split('')
+    .map((character) => character.charCodeAt(0) < 32 ? '_' : character)
+    .join('')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\.+$/, '')
+    .slice(0, 140);
+
+  return safeFilename || 'nutrilink-download';
 }
 
 function isAllowedHost(targetUrl) {
@@ -157,6 +177,7 @@ export default async function handler(req, res) {
   }
 
   const target = getTargetUrl(req);
+  const downloadFilename = getDownloadFilename(req);
   if (!target) {
     res.status(400).json({ error: 'Missing url parameter' });
     return;
@@ -213,6 +234,10 @@ export default async function handler(req, res) {
       const value = upstream.headers.get(header);
       if (value) res.setHeader(header, value);
     });
+
+    if (downloadFilename) {
+      res.setHeader('Content-Disposition', `attachment; filename="${downloadFilename}"`);
+    }
 
     res.status(upstream.status);
 

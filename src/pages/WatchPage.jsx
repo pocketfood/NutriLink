@@ -20,6 +20,7 @@ import { nextMediaLoadState } from '../utils/mediaLoading';
 import { isXPostUrl, resolveXVideo } from '../utils/xPost';
 import { getTwitterPostText, getUserDisplayDescription, isSameDescription } from '../utils/twitterMetadata';
 import { isHlsUrl } from '../utils/mediaUrls';
+import { sanitizeDownloadFilename, triggerDownload } from '../utils/download';
 
 const STUDIO_TRACK_COLORS = [
   { wave: 'rgba(127,176,255,0.7)', progress: '#4da2ff' },
@@ -55,6 +56,7 @@ export default function WatchPage({ idOverride } = {}) {
   const [studioDrawerOpen, setStudioDrawerOpen] = useState(false);
   const [needsUserStart, setNeedsUserStart] = useState(false);
   const [isCompactLayout, setIsCompactLayout] = useState(false);
+  const [isDownloading, setIsDownloading] = useState(false);
   const [mediaLoadState, setMediaLoadState] = useState({
     isLoading: false,
     loadedPercent: null,
@@ -208,9 +210,43 @@ export default function WatchPage({ idOverride } = {}) {
   const videoSrc = hasStudioVideo ? getMediaProxyUrl(videoData.videoUrl) : mixUrl ? null : mediaSrc;
   const isHlsVideo = Boolean(!isAudioOnlyPlayback && playableMediaUrl && isHlsUrl(playableMediaUrl));
   const primaryMediaRef = mixUrl ? audioRef : videoRef;
-  const downloadUrl = mixUrl || videoData?.videoUrl || (isXPostUrl(videoData?.url) ? null : videoData?.url) || twitterSourceUrl;
   const twitterPostText = isTwitterVideo ? getTwitterPostText(videoData) : '';
   const displayDescription = getUserDisplayDescription(videoData, isTwitterVideo);
+
+  const handleDownload = async () => {
+    if (!videoData || isDownloading) return;
+
+    setIsDownloading(true);
+    try {
+      let resolvedDownloadUrl = mixUrl || videoData.videoUrl || (isXPostUrl(videoData.url) ? null : videoData.url);
+
+      if (isTwitterVideo && twitterSourceUrl) {
+        try {
+          const resolved = await resolveXVideo(twitterSourceUrl);
+          resolvedDownloadUrl = resolved.videoUrl;
+          applyResolvedTwitterVideo(resolved);
+        } catch (resolveError) {
+          if (!resolvedDownloadUrl) throw resolveError;
+        }
+      }
+
+      if (!resolvedDownloadUrl) {
+        throw new Error('No downloadable media is available for this link.');
+      }
+
+      const proxiedUrl = getMediaProxyUrl(resolvedDownloadUrl);
+      const defaultExtension = isAudioOnlyPlayback ? 'mp3' : 'mp4';
+      const baseFilename = sanitizeDownloadFilename(videoData.filename, `nutrilink-${videoData.tweetId || 'video'}`);
+      const filename = /\.[a-z0-9]{2,5}$/i.test(baseFilename)
+        ? baseFilename
+        : `${baseFilename}.${defaultExtension}`;
+      triggerDownload(proxiedUrl, filename);
+    } catch (downloadError) {
+      window.alert(downloadError instanceof Error ? downloadError.message : 'Download failed.');
+    } finally {
+      setIsDownloading(false);
+    }
+  };
 
   const applyResolvedTwitterVideo = useCallback((resolved) => {
     setVideoData((current) => {
@@ -1442,9 +1478,13 @@ export default function WatchPage({ idOverride } = {}) {
             <div onClick={() => setShowQR(true)} style={iconButtonStyle} title="Share">
               <FaQrcode size={18} />
             </div>
-            <div onClick={() => downloadUrl && window.open(downloadUrl, '_blank')} style={iconButtonStyle} title="Download">
-              <FaDownload size={18} />
-            </div>
+          <div
+            onClick={handleDownload}
+            style={{ ...iconButtonStyle, opacity: isDownloading ? 0.55 : 1 }}
+            title={isDownloading ? 'Preparing download' : 'Download'}
+          >
+            <FaDownload size={18} />
+          </div>
           </div>
         </div>
         {needsUserStart && useStudioPlayback && (
