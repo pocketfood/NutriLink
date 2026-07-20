@@ -89,6 +89,11 @@ function getVideoMimeType(value) {
   return 'video/mp4';
 }
 
+function getVideoEmbedUrl(id, origin) {
+  if (!id) return null;
+  return toAbsoluteUrl(`/api/video-embed?id=${encodeURIComponent(id)}`, origin);
+}
+
 async function getVideoMetadata(id) {
   if (!id) return null;
   try {
@@ -172,8 +177,11 @@ export default async function handler(req, res) {
   const description = metadata?.userDescription || metadata?.description || DEFAULT_DESCRIPTION;
   const image = toAbsoluteUrl(metadata?.poster || '/nutrilink-logo.png', origin);
   const rawVideoUrl = metadata?.videoUrl || metadata?.url;
-  const videoUrl = rawVideoUrl && !isRawXUrl(rawVideoUrl) ? getVideoPreviewUrl(rawVideoUrl, origin) : null;
-  const videoType = rawVideoUrl ? getVideoMimeType(rawVideoUrl) : null;
+  const sourceVideoUrl = rawVideoUrl && !isRawXUrl(rawVideoUrl) ? getVideoPreviewUrl(rawVideoUrl, origin) : null;
+  const sourceVideoType = rawVideoUrl ? getVideoMimeType(rawVideoUrl) : null;
+  const isWebm = sourceVideoType === 'video/webm';
+  const videoUrl = isWebm ? getVideoEmbedUrl(id, origin) : sourceVideoUrl;
+  const videoType = isWebm ? 'text/html' : sourceVideoType;
   const videoWidth = metadata?.width != null && Number.isFinite(Number(metadata.width)) ? Number(metadata.width) : null;
   const videoHeight = metadata?.height != null && Number.isFinite(Number(metadata.height)) ? Number(metadata.height) : null;
   const indexHtml = await getIndexHtml(origin);
