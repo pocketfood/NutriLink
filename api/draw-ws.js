@@ -60,7 +60,7 @@ function normalizeStroke(message) {
     ? message.color
     : '#2f7fe6';
   const size = Number.isFinite(Number(message.size))
-    ? clamp(Number(message.size), 1, 40)
+    ? clamp(Number(message.size), 1, 12)
     : 4;
 
   return { points, color, size };
@@ -127,6 +127,7 @@ function normalizeCursor(message, client) {
     name: client.name,
     x: clamp(Number(point.x), 0, 1),
     y: clamp(Number(point.y), 0, 1),
+    mode: message.mode === 'move' ? 'move' : 'draw',
     active: message.active !== false,
   };
 }
@@ -236,6 +237,21 @@ function broadcastPresence(room) {
   broadcast(room, { type: 'presence', count: room.clients.size });
 }
 
+function getSnapshot(room) {
+  return {
+    type: 'snapshot',
+    strokes: room.strokes,
+    images: Array.from(room.images.values()),
+    cursors: Array.from(room.clients.values(), ({ cursor }) => cursor).filter(Boolean),
+    participants: room.clients.size,
+  };
+}
+
+async function refreshClientSnapshot(roomId, room, socket) {
+  await ensureImagesLoaded(roomId, room);
+  send(socket, getSnapshot(room));
+}
+
 const server = createServer((_request, response) => {
   response.writeHead(404, { 'Content-Type': 'application/json' });
   response.end(JSON.stringify({ error: 'WebSocket endpoint' }));
@@ -255,12 +271,7 @@ socketServer.on('connection', (socket, request) => {
   const room = getRoom(roomId);
   const client = { id: createClientId(), name: 'Guest', cursor: null };
   room.clients.set(socket, client);
-  send(socket, {
-    type: 'snapshot',
-    strokes: room.strokes,
-    images: Array.from(room.images.values()),
-    cursors: Array.from(room.clients.values(), ({ cursor }) => cursor).filter(Boolean),
-  });
+  send(socket, getSnapshot(room));
   broadcastPresence(room);
   void ensureImagesLoaded(roomId, room);
 
@@ -282,6 +293,12 @@ socketServer.on('connection', (socket, request) => {
         broadcast(room, { type: 'cursor', cursor: client.cursor });
       }
       send(socket, { type: 'joined', id: client.id });
+      void refreshClientSnapshot(roomId, room, socket);
+      return;
+    }
+
+    if (message.type === 'sync') {
+      void refreshClientSnapshot(roomId, room, socket);
       return;
     }
 

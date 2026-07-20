@@ -101,6 +101,7 @@ function DrawPage() {
   const [connectionState, setConnectionState] = useState('connecting');
   const [participantCount, setParticipantCount] = useState(0);
   const [color, setColor] = useState(COLORS[0]);
+  const [brushSize, setBrushSize] = useState(3);
   const [copied, setCopied] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
@@ -114,6 +115,7 @@ function DrawPage() {
   const [images, setImages] = useState({});
   const [selectedImageId, setSelectedImageId] = useState(null);
   const [clientId] = useState(createClientId);
+  const stageRef = useRef(null);
   const canvasRef = useRef(null);
   const fileInputRef = useRef(null);
   const socketRef = useRef(null);
@@ -138,11 +140,11 @@ function DrawPage() {
     if (!canvas) return;
     const context = canvas.getContext('2d');
     if (!context) return;
-    const rect = canvas.getBoundingClientRect();
+    const rect = (stageRef.current || canvas).getBoundingClientRect();
     context.clearRect(0, 0, rect.width, rect.height);
     context.lineCap = 'round';
     context.lineJoin = 'round';
-    const brushScale = Math.max(0.6, Math.min(1, rect.width / 900));
+    const brushScale = clamp(Math.min(rect.width, rect.height) / 720, 0.5, 1);
 
     strokesRef.current.forEach((stroke) => {
       if (!stroke.points?.length) return;
@@ -163,7 +165,7 @@ function DrawPage() {
     const ratio = window.devicePixelRatio || 1;
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const rect = canvas.getBoundingClientRect();
+    const rect = (stageRef.current || canvas).getBoundingClientRect();
     canvas.width = Math.max(1, Math.round(rect.width * ratio));
     canvas.height = Math.max(1, Math.round(rect.height * ratio));
     canvas.getContext('2d')?.setTransform(ratio, 0, 0, ratio, 0, 0);
@@ -180,8 +182,8 @@ function DrawPage() {
     clientNameRef.current = clientName;
   }, [clientName]);
 
-  const sendCursor = (point, active = true) => {
-    pendingCursorRef.current = { type: 'cursor', point, active };
+  const sendCursor = (point, active = true, mode = 'draw') => {
+    pendingCursorRef.current = { type: 'cursor', point, active, mode };
     if (cursorFrameRef.current !== null) return;
     cursorFrameRef.current = window.requestAnimationFrame(() => {
       cursorFrameRef.current = null;
@@ -209,10 +211,27 @@ function DrawPage() {
     });
   };
 
+  const sendImageUpdateNow = (image) => {
+    if (!image) return;
+    if (imageFrameRef.current !== null) {
+      window.cancelAnimationFrame(imageFrameRef.current);
+      imageFrameRef.current = null;
+    }
+    pendingImageUpdateRef.current = null;
+    send({
+      type: 'image:update',
+      id: image.id,
+      x: image.x,
+      y: image.y,
+      width: image.width,
+      height: image.height,
+    });
+  };
+
   const getPoint = (event) => {
-    const canvas = canvasRef.current;
-    if (!canvas) return null;
-    const rect = canvas.getBoundingClientRect();
+    const board = stageRef.current || canvasRef.current;
+    if (!board) return null;
+    const rect = board.getBoundingClientRect();
     return {
       x: Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width)),
       y: Math.min(1, Math.max(0, (event.clientY - rect.top) / rect.height)),
@@ -276,6 +295,7 @@ function DrawPage() {
       socket.onopen = () => {
         setConnectionState('connected');
         send({ type: 'join', id: clientId, name: clientNameRef.current });
+        send({ type: 'sync' });
       };
       socket.onmessage = (event) => {
         try {
@@ -284,6 +304,7 @@ function DrawPage() {
             strokesRef.current = Array.isArray(message.strokes) ? message.strokes : [];
             replaceImages(toImageMap(message.images));
             setCursors(toCursorMap(message.cursors));
+            setParticipantCount(Number(message.participants) || 0);
             redraw();
           } else if (message.type === 'stroke' && message.stroke) {
             strokesRef.current.push(message.stroke);
@@ -335,7 +356,12 @@ function DrawPage() {
   useEffect(() => {
     resizeCanvas();
     window.addEventListener('resize', resizeCanvas);
-    return () => window.removeEventListener('resize', resizeCanvas);
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(resizeCanvas);
+    if (observer && stageRef.current) observer.observe(stageRef.current);
+    return () => {
+      window.removeEventListener('resize', resizeCanvas);
+      observer?.disconnect();
+    };
   }, [resizeCanvas]);
 
   useEffect(() => {
@@ -364,16 +390,16 @@ function DrawPage() {
     event.currentTarget.setPointerCapture?.(event.pointerId);
     const point = getPoint(event);
     if (!point) return;
-    sendCursor(point);
+    sendCursor(point, true, 'draw');
     drawingRef.current = true;
-    activeStrokeRef.current = { points: [point], color, size: 4 };
+    activeStrokeRef.current = { points: [point], color, size: brushSize };
   };
 
   const handlePointerMove = (event) => {
     if (toolMode !== 'draw') return;
     const point = getPoint(event);
     if (!point) return;
-    sendCursor(point);
+    sendCursor(point, true, 'draw');
     if (!drawingRef.current || !activeStrokeRef.current) return;
     activeStrokeRef.current.points.push(point);
     strokesRef.current = [
@@ -400,7 +426,17 @@ function DrawPage() {
   const handlePointerLeave = () => {
     if (toolMode !== 'draw') return;
     finishStroke();
-    sendCursor({ x: 0, y: 0 }, false);
+    sendCursor({ x: 0, y: 0 }, false, 'draw');
+  };
+
+  const handleCursorMove = (event, mode = 'move') => {
+    if (connectionState !== 'connected') return;
+    const point = getPoint(event);
+    if (point) sendCursor(point, true, mode);
+  };
+
+  const handleCursorLeave = (mode = 'move') => {
+    if (connectionState === 'connected') sendCursor({ x: 0, y: 0 }, false, mode);
   };
 
   const handleImagePointerDown = (event, image, mode = 'move') => {
@@ -409,6 +445,7 @@ function DrawPage() {
     event.currentTarget.setPointerCapture?.(event.pointerId);
     const point = getPoint(event);
     if (!point) return;
+    sendCursor(point, true, 'move');
     setToolMode('select');
     setSelectedImageId(image.id);
     imageInteractionRef.current = {
@@ -421,11 +458,12 @@ function DrawPage() {
   };
 
   const handleImagePointerMove = (event) => {
+    const point = getPoint(event);
+    if (!point) return;
+    sendCursor(point, true, 'move');
     const interaction = imageInteractionRef.current;
     if (!interaction) return;
     event.preventDefault();
-    const point = getPoint(event);
-    if (!point) return;
     const deltaX = point.x - interaction.startPoint.x;
     const deltaY = point.y - interaction.startPoint.y;
     const initial = interaction.initial;
@@ -476,6 +514,7 @@ function DrawPage() {
   const finishImageInteraction = (event) => {
     const interaction = imageInteractionRef.current;
     if (!interaction) return;
+    sendImageUpdateNow(imagesRef.current[interaction.id]);
     interaction.captureTarget?.releasePointerCapture?.(event.pointerId);
     imageInteractionRef.current = null;
   };
@@ -669,6 +708,22 @@ function DrawPage() {
           </div>
         </div>
 
+        <div style={settingsSectionStyle}>
+          <label htmlFor="draw-brush-size" style={settingsLabelStyle}>
+            Brush size <output style={brushSizeOutputStyle}>{brushSize}px</output>
+          </label>
+          <input
+            id="draw-brush-size"
+            type="range"
+            min="1"
+            max="12"
+            step="1"
+            value={brushSize}
+            onChange={(event) => setBrushSize(Number(event.target.value))}
+            style={brushSizeSliderStyle}
+          />
+        </div>
+
         <div style={settingsActionsStyle}>
           <button
             type="button"
@@ -702,6 +757,7 @@ function DrawPage() {
       </aside>
 
       <div
+        ref={stageRef}
         style={canvasStageStyle}
       >
         <canvas
@@ -723,7 +779,7 @@ function DrawPage() {
           onPointerEnter={(event) => {
             if (toolMode === 'draw' && connectionState === 'connected') {
               const point = getPoint(event);
-              if (point) sendCursor(point);
+              if (point) sendCursor(point, true, 'draw');
             }
           }}
           onPointerLeave={handlePointerLeave}
@@ -731,6 +787,18 @@ function DrawPage() {
             ...drawSurfaceStyle,
             zIndex: toolMode === 'draw' ? 4 : 0,
             pointerEvents: toolMode === 'draw' ? 'auto' : 'none',
+          }}
+        />
+
+        <div
+          aria-hidden="true"
+          onPointerMove={(event) => handleCursorMove(event, 'move')}
+          onPointerEnter={(event) => handleCursorMove(event, 'move')}
+          onPointerLeave={() => handleCursorLeave('move')}
+          style={{
+            ...cursorSurfaceStyle,
+            zIndex: toolMode === 'draw' ? 0 : 1.5,
+            pointerEvents: toolMode === 'draw' ? 'none' : 'auto',
           }}
         />
 
@@ -743,7 +811,9 @@ function DrawPage() {
               tabIndex={0}
               aria-label={`Move ${image.name || 'image'}`}
               onPointerDown={(event) => handleImagePointerDown(event, image)}
+              onPointerEnter={handleImagePointerMove}
               onPointerMove={handleImagePointerMove}
+              onPointerLeave={() => handleCursorLeave('move')}
               onPointerUp={finishImageInteraction}
               onPointerCancel={finishImageInteraction}
               style={{
@@ -780,8 +850,17 @@ function DrawPage() {
               top: `${cursor.y * 100}%`,
             }}
           >
-            <span style={{ ...cursorDotStyle, background: getCursorColor(cursor.id) }} />
-            <span style={cursorLabelStyle}>{cursor.name || 'Guest'}</span>
+            <span
+              style={{
+                ...cursorDotStyle,
+                background: getCursorColor(cursor.id),
+                borderRadius: cursor.mode === 'move' ? '3px' : '50%',
+                transform: cursor.mode === 'move' ? 'rotate(45deg)' : 'none',
+              }}
+            />
+            <span style={cursorLabelStyle}>
+              {cursor.name || 'Guest'} · {cursor.mode === 'move' ? 'move' : 'brush'}
+            </span>
           </div>
         ))}
 
@@ -905,6 +984,18 @@ const settingsLabelStyle = {
   fontWeight: 700,
 };
 
+const brushSizeOutputStyle = {
+  float: 'right',
+  color: '#60708a',
+  fontWeight: 400,
+};
+
+const brushSizeSliderStyle = {
+  width: '100%',
+  accentColor: '#2f62cc',
+  cursor: 'pointer',
+};
+
 const nameRowStyle = {
   display: 'flex',
   alignItems: 'center',
@@ -981,6 +1072,13 @@ const drawSurfaceStyle = {
   inset: 0,
   touchAction: 'none',
   cursor: 'crosshair',
+};
+
+const cursorSurfaceStyle = {
+  position: 'absolute',
+  inset: 0,
+  touchAction: 'none',
+  cursor: 'default',
 };
 
 const imageFrameStyle = {
