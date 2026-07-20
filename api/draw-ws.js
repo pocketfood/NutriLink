@@ -60,7 +60,7 @@ function normalizeStroke(message) {
     ? message.color
     : '#2f7fe6';
   const size = Number.isFinite(Number(message.size))
-    ? clamp(Number(message.size), 1, 8)
+    ? clamp(Number(message.size), 1, 24)
     : 4;
 
   return { points, color, size };

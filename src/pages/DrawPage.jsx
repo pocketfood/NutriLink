@@ -101,7 +101,7 @@ function DrawPage() {
   const [connectionState, setConnectionState] = useState('connecting');
   const [participantCount, setParticipantCount] = useState(0);
   const [color, setColor] = useState(COLORS[0]);
-  const [brushSize, setBrushSize] = useState(3);
+  const [brushSize, setBrushSize] = useState(4);
   const [copied, setCopied] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
@@ -149,7 +149,7 @@ function DrawPage() {
     strokesRef.current.forEach((stroke) => {
       if (!stroke.points?.length) return;
       context.strokeStyle = stroke.color;
-      context.lineWidth = clamp(Number(stroke.size) || 3, 1, 8);
+      context.lineWidth = clamp(Number(stroke.size) || 4, 1, 24);
       context.beginPath();
       stroke.points.forEach((point, index) => {
         const x = point.x * rect.width;
@@ -389,7 +389,9 @@ function DrawPage() {
   };
 
   const handlePointerDown = (event) => {
+    if (event.button !== 0) return;
     setImageContextMenu(null);
+    resizeCanvas();
     if (toolMode !== 'draw') {
       setToolMode('draw');
       setSelectedImageId(null);
@@ -742,7 +744,7 @@ function DrawPage() {
             id="draw-brush-size"
             type="range"
             min="1"
-            max="8"
+            max="24"
             step="1"
             value={brushSize}
             onChange={(event) => setBrushSize(Number(event.target.value))}
@@ -917,8 +919,6 @@ function DrawPage() {
 const pageStyle = {
   position: 'fixed',
   inset: 0,
-  width: '100vw',
-  height: '100dvh',
   overflow: 'hidden',
   background: '#fff',
   fontFamily: 'Arial, sans-serif',
@@ -1088,8 +1088,6 @@ const toolButtonStyle = {
 const canvasStageStyle = {
   position: 'absolute',
   inset: 0,
-  width: '100%',
-  height: '100%',
   background: '#fff',
   touchAction: 'none',
 };
