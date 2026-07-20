@@ -1,8 +1,14 @@
+import { upload } from '@vercel/blob/client';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 
 const ROOM_PATTERN = /^[a-z0-9_-]{4,64}$/i;
 const COLORS = ['#111827', '#e05252', '#2f7fe6', '#35a56a', '#9b59b6', '#f39c12'];
+const IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
+
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
 
 function createRoomId() {
   return Math.random().toString(36).slice(2, 10);
@@ -10,6 +16,10 @@ function createRoomId() {
 
 function createClientId() {
   return `guest-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function createImageId() {
+  return `image-${Math.random().toString(36).slice(2, 12)}`;
 }
 
 function getStoredName() {
@@ -43,6 +53,40 @@ function toCursorMap(cursors) {
   }, {});
 }
 
+function toImageMap(images) {
+  return (Array.isArray(images) ? images : []).reduce((map, image) => {
+    if (image?.id && image.url) map[image.id] = image;
+    return map;
+  }, {});
+}
+
+function safeFileName(name) {
+  return (name || 'image').replace(/[^a-z0-9._-]+/gi, '-').slice(0, 80) || 'image';
+}
+
+function readImageDimensions(url) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve({ width: image.naturalWidth || 1, height: image.naturalHeight || 1 });
+    image.onerror = () => reject(new Error('Unable to read image dimensions'));
+    image.src = url;
+  });
+}
+
+function getInitialImageSize(dimensions) {
+  const aspect = dimensions.width / Math.max(1, dimensions.height);
+  let width = 0.32;
+  let height = width / aspect;
+  if (height > 0.42) {
+    height = 0.42;
+    width = height * aspect;
+  }
+  return {
+    width: clamp(width, 0.08, 0.7),
+    height: clamp(height, 0.08, 0.7),
+  };
+}
+
 function DrawPage() {
   const { roomId: routeRoomId } = useParams();
   const navigate = useNavigate();
@@ -52,16 +96,30 @@ function DrawPage() {
   const [color, setColor] = useState(COLORS[0]);
   const [copied, setCopied] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isDragOver, setIsDragOver] = useState(false);
+  const [uploadState, setUploadState] = useState('idle');
   const [cursors, setCursors] = useState({});
+  const [images, setImages] = useState({});
+  const [selectedImageId, setSelectedImageId] = useState(null);
   const [clientId] = useState(createClientId);
   const [clientName] = useState(getStoredName);
   const canvasRef = useRef(null);
+  const fileInputRef = useRef(null);
   const socketRef = useRef(null);
   const strokesRef = useRef([]);
+  const imagesRef = useRef({});
   const activeStrokeRef = useRef(null);
   const drawingRef = useRef(false);
+  const imageInteractionRef = useRef(null);
   const cursorFrameRef = useRef(null);
   const pendingCursorRef = useRef(null);
+  const imageFrameRef = useRef(null);
+  const pendingImageUpdateRef = useRef(null);
+
+  const replaceImages = useCallback((nextImages) => {
+    imagesRef.current = nextImages;
+    setImages(nextImages);
+  }, []);
 
   const redraw = useCallback(() => {
     const canvas = canvasRef.current;
@@ -116,6 +174,24 @@ function DrawPage() {
     });
   };
 
+  const sendImageUpdate = (image) => {
+    pendingImageUpdateRef.current = {
+      type: 'image:update',
+      id: image.id,
+      x: image.x,
+      y: image.y,
+      width: image.width,
+      height: image.height,
+    };
+    if (imageFrameRef.current !== null) return;
+    imageFrameRef.current = window.requestAnimationFrame(() => {
+      imageFrameRef.current = null;
+      const message = pendingImageUpdateRef.current;
+      pendingImageUpdateRef.current = null;
+      if (message) send(message);
+    });
+  };
+
   const getPoint = (event) => {
     const canvas = canvasRef.current;
     if (!canvas) return null;
@@ -152,6 +228,7 @@ function DrawPage() {
           const message = JSON.parse(event.data);
           if (message.type === 'snapshot') {
             strokesRef.current = Array.isArray(message.strokes) ? message.strokes : [];
+            replaceImages(toImageMap(message.images));
             setCursors(toCursorMap(message.cursors));
             redraw();
           } else if (message.type === 'stroke' && message.stroke) {
@@ -159,7 +236,13 @@ function DrawPage() {
             redraw();
           } else if (message.type === 'clear') {
             strokesRef.current = [];
+            replaceImages({});
+            setSelectedImageId(null);
             redraw();
+          } else if (message.type === 'image:add' && message.image?.id) {
+            replaceImages({ ...imagesRef.current, [message.image.id]: message.image });
+          } else if (message.type === 'image:update' && message.image?.id) {
+            replaceImages({ ...imagesRef.current, [message.image.id]: message.image });
           } else if (message.type === 'cursor' && message.cursor?.id) {
             setCursors((current) => {
               const next = { ...current };
@@ -178,6 +261,7 @@ function DrawPage() {
       socket.onclose = () => {
         if (cancelled) return;
         setCursors({});
+        setParticipantCount(0);
         setConnectionState('offline');
         retryTimer = window.setTimeout(connect, 2500);
       };
@@ -190,7 +274,7 @@ function DrawPage() {
       socketRef.current?.close();
       socketRef.current = null;
     };
-  }, [clientId, clientName, redraw, roomId, send]);
+  }, [clientId, clientName, redraw, replaceImages, roomId, send]);
 
   useEffect(() => {
     resizeCanvas();
@@ -204,11 +288,21 @@ function DrawPage() {
     return () => {
       document.removeEventListener('fullscreenchange', updateFullscreenState);
       if (cursorFrameRef.current !== null) window.cancelAnimationFrame(cursorFrameRef.current);
+      if (imageFrameRef.current !== null) window.cancelAnimationFrame(imageFrameRef.current);
     };
   }, []);
 
+  const updateLocalImage = (id, changes) => {
+    const current = imagesRef.current[id];
+    if (!current) return;
+    const nextImage = { ...current, ...changes };
+    replaceImages({ ...imagesRef.current, [id]: nextImage });
+    sendImageUpdate(nextImage);
+  };
+
   const handlePointerDown = (event) => {
     if (connectionState !== 'connected') return;
+    setSelectedImageId(null);
     event.currentTarget.setPointerCapture?.(event.pointerId);
     const point = getPoint(event);
     if (!point) return;
@@ -249,8 +343,123 @@ function DrawPage() {
     sendCursor({ x: 0, y: 0 }, false);
   };
 
+  const handleImagePointerDown = (event, image, mode = 'move') => {
+    if (connectionState !== 'connected') return;
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    const point = getPoint(event);
+    if (!point) return;
+    setSelectedImageId(image.id);
+    imageInteractionRef.current = {
+      id: image.id,
+      mode,
+      startPoint: point,
+      initial: { ...image },
+    };
+  };
+
+  const handleImagePointerMove = (event) => {
+    const interaction = imageInteractionRef.current;
+    if (!interaction) return;
+    event.preventDefault();
+    const point = getPoint(event);
+    if (!point) return;
+    const deltaX = point.x - interaction.startPoint.x;
+    const deltaY = point.y - interaction.startPoint.y;
+    const initial = interaction.initial;
+
+    if (interaction.mode === 'move') {
+      updateLocalImage(interaction.id, {
+        x: clamp(initial.x + deltaX, 0, 1 - initial.width),
+        y: clamp(initial.y + deltaY, 0, 1 - initial.height),
+      });
+      return;
+    }
+
+    const aspect = initial.height / initial.width;
+    let width = clamp(initial.width + deltaX, 0.04, 0.9);
+    let height = width * aspect;
+    if (height > 0.9) {
+      height = 0.9;
+      width = height / aspect;
+    }
+    width = Math.min(width, 1 - initial.x);
+    height = Math.min(height, 1 - initial.y);
+    if (width >= 0.04 && height >= 0.04) updateLocalImage(interaction.id, { width, height });
+  };
+
+  const finishImageInteraction = (event) => {
+    if (!imageInteractionRef.current) return;
+    event.currentTarget.releasePointerCapture?.(event.pointerId);
+    imageInteractionRef.current = null;
+  };
+
+  const uploadImageFiles = async (fileList, dropPoint = null) => {
+    if (connectionState !== 'connected') {
+      setUploadState('Connect first');
+      window.setTimeout(() => setUploadState('idle'), 1800);
+      return;
+    }
+
+    const files = Array.from(fileList || [])
+      .filter((file) => IMAGE_TYPES.has(file.type) && file.size <= 5 * 1024 * 1024)
+      .slice(0, 5);
+    if (!files.length) {
+      setUploadState('Images only, max 5 MB');
+      window.setTimeout(() => setUploadState('idle'), 2200);
+      return;
+    }
+
+    setUploadState('Uploading...');
+    try {
+      for (const [index, file] of files.entries()) {
+        const blob = await upload(`draw/${roomId}/${safeFileName(file.name)}`, file, {
+          access: 'public',
+          contentType: file.type,
+          handleUploadUrl: '/api/draw-image-upload',
+          clientPayload: JSON.stringify({ roomId }),
+        });
+        const dimensions = await readImageDimensions(blob.url);
+        const size = getInitialImageSize(dimensions);
+        const x = clamp((dropPoint?.x ?? 0.5) - size.width / 2 + index * 0.03, 0, 1 - size.width);
+        const y = clamp((dropPoint?.y ?? 0.5) - size.height / 2 + index * 0.03, 0, 1 - size.height);
+        send({
+          type: 'image:add',
+          image: {
+            id: createImageId(),
+            url: blob.url,
+            name: file.name,
+            x,
+            y,
+            width: size.width,
+            height: size.height,
+          },
+        });
+      }
+      setUploadState('Image added');
+    } catch (error) {
+      console.error('Draw image upload failed:', error);
+      setUploadState('Upload failed');
+    } finally {
+      window.setTimeout(() => setUploadState('idle'), 2200);
+    }
+  };
+
+  const handleFileInputChange = (event) => {
+    uploadImageFiles(event.target.files);
+    event.target.value = '';
+  };
+
+  const handleDrop = (event) => {
+    event.preventDefault();
+    setIsDragOver(false);
+    uploadImageFiles(event.dataTransfer.files, getPoint(event));
+  };
+
   const clearCanvas = () => {
     strokesRef.current = [];
+    replaceImages({});
+    setSelectedImageId(null);
     redraw();
     send({ type: 'clear' });
   };
@@ -276,7 +485,15 @@ function DrawPage() {
   };
 
   return (
-    <div style={pageStyle}>
+    <div
+      style={pageStyle}
+      onDragOver={(event) => {
+        event.preventDefault();
+        setIsDragOver(true);
+      }}
+      onDragLeave={() => setIsDragOver(false)}
+      onDrop={handleDrop}
+    >
       <Link to="/" style={homeLinkStyle}>NutriLink</Link>
 
       <div style={toolbarStyle}>
@@ -294,11 +511,22 @@ function DrawPage() {
             }}
           />
         ))}
+        <button type="button" onClick={() => fileInputRef.current?.click()} style={toolButtonStyle}>
+          {uploadState === 'uploading' ? 'Uploading...' : 'Add image'}
+        </button>
         <button type="button" onClick={clearCanvas} style={toolButtonStyle}>Clear</button>
         <button type="button" onClick={shareRoom} style={toolButtonStyle}>{copied ? 'Copied' : 'Share'}</button>
         <button type="button" onClick={toggleFullscreen} style={toolButtonStyle}>
           {isFullscreen ? 'Exit full screen' : 'Full screen'}
         </button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/jpeg,image/png,image/webp,image/gif"
+          multiple
+          onChange={handleFileInputChange}
+          style={{ display: 'none' }}
+        />
       </div>
 
       <div style={canvasStageStyle}>
@@ -318,6 +546,41 @@ function DrawPage() {
           style={canvasStyle}
         />
 
+        {Object.values(images).map((image) => {
+          const selected = image.id === selectedImageId;
+          return (
+            <div
+              key={image.id}
+              role="button"
+              tabIndex={0}
+              aria-label={`Move ${image.name || 'image'}`}
+              onPointerDown={(event) => handleImagePointerDown(event, image)}
+              onPointerMove={handleImagePointerMove}
+              onPointerUp={finishImageInteraction}
+              onPointerCancel={finishImageInteraction}
+              style={{
+                ...imageFrameStyle,
+                left: `${image.x * 100}%`,
+                top: `${image.y * 100}%`,
+                width: `${image.width * 100}%`,
+                height: `${image.height * 100}%`,
+                outline: selected ? '2px solid #2f62cc' : '1px solid rgba(17,24,39,0.15)',
+                cursor: selected ? 'move' : 'grab',
+              }}
+            >
+              <img src={image.url} alt={image.name || 'Shared image'} draggable="false" style={imageStyle} />
+              {selected && (
+                <button
+                  type="button"
+                  aria-label="Resize image"
+                  onPointerDown={(event) => handleImagePointerDown(event, image, 'resize')}
+                  style={resizeHandleStyle}
+                />
+              )}
+            </div>
+          );
+        })}
+
         {Object.values(cursors).map((cursor) => (
           <div
             key={cursor.id}
@@ -331,11 +594,14 @@ function DrawPage() {
             <span style={cursorLabelStyle}>{cursor.name || 'Guest'}</span>
           </div>
         ))}
+
+        {isDragOver && <div style={dropOverlayStyle}>Drop image here</div>}
       </div>
 
       <div style={footerStyle}>
         {participantCount} {participantCount === 1 ? 'user' : 'users'}
         {connectionState !== 'connected' && ' - reconnecting...'}
+        {uploadState !== 'idle' && ` - ${uploadState}`}
       </div>
     </div>
   );
@@ -368,8 +634,11 @@ const toolbarStyle = {
   left: '50%',
   zIndex: 5,
   display: 'flex',
+  flexWrap: 'wrap',
   alignItems: 'center',
+  justifyContent: 'center',
   gap: '0.55rem',
+  maxWidth: 'calc(100vw - 24px)',
   padding: '0.55rem 0.7rem',
   transform: 'translateX(-50%)',
   background: 'rgba(255,255,255,0.92)',
@@ -378,6 +647,7 @@ const toolbarStyle = {
 };
 
 const colorButtonStyle = {
+  flex: '0 0 auto',
   width: '18px',
   height: '18px',
   padding: 0,
@@ -387,6 +657,7 @@ const colorButtonStyle = {
 };
 
 const toolButtonStyle = {
+  flex: '0 0 auto',
   border: '0',
   borderRadius: '6px',
   padding: '0.4rem 0.55rem',
@@ -411,9 +682,41 @@ const canvasStyle = {
   cursor: 'crosshair',
 };
 
+const imageFrameStyle = {
+  position: 'absolute',
+  zIndex: 3,
+  userSelect: 'none',
+  touchAction: 'none',
+  overflow: 'visible',
+  background: '#fff',
+};
+
+const imageStyle = {
+  display: 'block',
+  width: '100%',
+  height: '100%',
+  objectFit: 'contain',
+  pointerEvents: 'none',
+  userSelect: 'none',
+};
+
+const resizeHandleStyle = {
+  position: 'absolute',
+  right: '-7px',
+  bottom: '-7px',
+  width: '14px',
+  height: '14px',
+  padding: 0,
+  border: '2px solid #fff',
+  borderRadius: '50%',
+  background: '#2f62cc',
+  cursor: 'nwse-resize',
+  boxShadow: '0 1px 4px rgba(0,0,0,0.35)',
+};
+
 const cursorStyle = {
   position: 'absolute',
-  zIndex: 2,
+  zIndex: 4,
   display: 'flex',
   alignItems: 'center',
   gap: '0.25rem',
@@ -436,6 +739,19 @@ const cursorLabelStyle = {
   color: '#fff',
   fontSize: '0.65rem',
   whiteSpace: 'nowrap',
+};
+
+const dropOverlayStyle = {
+  position: 'absolute',
+  inset: 0,
+  zIndex: 4,
+  display: 'grid',
+  placeItems: 'center',
+  background: 'rgba(47,98,204,0.12)',
+  color: '#2f62cc',
+  fontSize: '1.1rem',
+  fontWeight: 700,
+  pointerEvents: 'none',
 };
 
 const footerStyle = {

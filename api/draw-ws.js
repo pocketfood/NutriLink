@@ -4,8 +4,10 @@ import { WebSocket, WebSocketServer } from 'ws';
 const rooms = new Map();
 const ROOM_PATTERN = /^[a-z0-9_-]{4,64}$/i;
 const MAX_STROKES = 5000;
+const MAX_IMAGES = 100;
 const MAX_POINTS_PER_STROKE = 600;
 const MAX_MESSAGE_BYTES = 256 * 1024;
+const IMAGE_ID_PATTERN = /^[a-z0-9_-]{4,64}$/i;
 
 function send(socket, payload) {
   if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(payload));
@@ -49,7 +51,7 @@ function normalizeStroke(message) {
 function getRoom(roomId) {
   let room = rooms.get(roomId);
   if (!room) {
-    room = { clients: new Map(), strokes: [] };
+    room = { clients: new Map(), strokes: [], images: new Map() };
     rooms.set(roomId, room);
   }
   return room;
@@ -94,6 +96,40 @@ function normalizeCursor(message, client) {
   };
 }
 
+function isPublicBlobUrl(value) {
+  if (typeof value !== 'string' || value.length > 2048) return false;
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' && (
+      url.hostname === 'public.blob.vercel-storage.com' ||
+      url.hostname.endsWith('.public.blob.vercel-storage.com')
+    );
+  } catch {
+    return false;
+  }
+}
+
+function normalizeImage(message) {
+  const value = message?.image || message;
+  if (!value || !IMAGE_ID_PATTERN.test(value.id) || !isPublicBlobUrl(value.url)) return null;
+
+  const width = clamp(Number(value.width), 0.04, 0.9);
+  const height = clamp(Number(value.height), 0.04, 0.9);
+  const x = clamp(Number(value.x), 0, 1 - width);
+  const y = clamp(Number(value.y), 0, 1 - height);
+  if (![x, y, width, height].every(Number.isFinite)) return null;
+
+  return {
+    id: value.id,
+    url: value.url,
+    name: normalizeName(value.name || 'Image'),
+    x,
+    y,
+    width,
+    height,
+  };
+}
+
 function broadcastPresence(room) {
   broadcast(room, { type: 'presence', count: room.clients.size });
 }
@@ -120,6 +156,7 @@ socketServer.on('connection', (socket, request) => {
   send(socket, {
     type: 'snapshot',
     strokes: room.strokes,
+    images: Array.from(room.images.values()),
     cursors: Array.from(room.clients.values(), ({ cursor }) => cursor).filter(Boolean),
   });
   broadcastPresence(room);
@@ -149,6 +186,25 @@ socketServer.on('connection', (socket, request) => {
       return;
     }
 
+    if (message.type === 'image:add') {
+      if (room.images.size >= MAX_IMAGES) return;
+      const image = normalizeImage(message);
+      if (!image || room.images.has(image.id)) return;
+      room.images.set(image.id, image);
+      broadcast(room, { type: 'image:add', image });
+      return;
+    }
+
+    if (message.type === 'image:update') {
+      const existing = room.images.get(message.id);
+      if (!existing) return;
+      const image = normalizeImage({ image: { ...existing, ...message } });
+      if (!image || image.id !== existing.id || image.url !== existing.url) return;
+      room.images.set(image.id, image);
+      broadcast(room, { type: 'image:update', image });
+      return;
+    }
+
     if (message.type === 'stroke') {
       const stroke = normalizeStroke(message);
       if (!stroke) return;
@@ -160,6 +216,7 @@ socketServer.on('connection', (socket, request) => {
 
     if (message.type === 'clear') {
       room.strokes = [];
+      room.images.clear();
       broadcast(room, { type: 'clear' });
     }
   });
