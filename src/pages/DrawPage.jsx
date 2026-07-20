@@ -312,11 +312,22 @@ function DrawPage() {
           } else if (message.type === 'stroke' && message.stroke) {
             strokesRef.current.push(message.stroke);
             redraw();
+          } else if (message.type === 'stroke:snapshot') {
+            strokesRef.current = Array.isArray(message.strokes) ? message.strokes : [];
+            redraw();
           } else if (message.type === 'clear') {
             strokesRef.current = [];
             replaceImages({});
             setSelectedImageId(null);
+            setImageContextMenu(null);
             redraw();
+          } else if (message.type === 'clear:drawings') {
+            strokesRef.current = [];
+            redraw();
+          } else if (message.type === 'clear:images') {
+            replaceImages({});
+            setSelectedImageId(null);
+            setImageContextMenu(null);
           } else if (message.type === 'image:add' && message.image?.id) {
             replaceImages({ ...imagesRef.current, [message.image.id]: message.image });
           } else if (message.type === 'image:update' && message.image?.id) {
@@ -607,13 +618,17 @@ function DrawPage() {
     uploadImageFiles(event.dataTransfer.files, getPoint(event));
   };
 
-  const clearCanvas = () => {
+  const clearDrawings = () => {
     strokesRef.current = [];
+    redraw();
+    send({ type: 'clear:drawings' });
+  };
+
+  const clearImages = () => {
     replaceImages({});
     setSelectedImageId(null);
     setImageContextMenu(null);
-    redraw();
-    send({ type: 'clear' });
+    send({ type: 'clear:images' });
   };
 
   const shareRoom = async () => {
@@ -767,7 +782,8 @@ function DrawPage() {
           <button type="button" onClick={() => fileInputRef.current?.click()} style={toolButtonStyle}>
             {uploadState === 'uploading' ? 'Uploading...' : 'Add image'}
           </button>
-          <button type="button" onClick={clearCanvas} style={toolButtonStyle}>Clear</button>
+          <button type="button" onClick={clearDrawings} style={toolButtonStyle}>Clear all drawings</button>
+          <button type="button" onClick={clearImages} style={toolButtonStyle}>Clear all images</button>
           <button type="button" onClick={shareRoom} style={toolButtonStyle}>{copied ? 'Copied' : 'Share'}</button>
           <button type="button" onClick={toggleFullscreen} style={toolButtonStyle}>
             {isFullscreen ? 'Exit full screen' : 'Full screen'}

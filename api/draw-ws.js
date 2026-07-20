@@ -5,12 +5,14 @@ import { WebSocket, WebSocketServer } from 'ws';
 const rooms = new Map();
 const ROOM_PATTERN = /^[a-z0-9_-]{4,64}$/i;
 const IMAGE_STATE_PREFIX = 'draw-images';
+const STROKE_STATE_PREFIX = 'draw-strokes';
 const MAX_STROKES = 5000;
 const MAX_IMAGES = 100;
 const MAX_POINTS_PER_STROKE = 600;
 const MAX_MESSAGE_BYTES = 256 * 1024;
 const IMAGE_ID_PATTERN = /^[a-z0-9_-]{4,64}$/i;
 const IMAGE_PERSISTENCE_DEBOUNCE_MS = 500;
+const STROKE_PERSISTENCE_DEBOUNCE_MS = 500;
 
 function send(socket, payload) {
   if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(payload));
@@ -39,6 +41,10 @@ function blobOptions() {
 
 function imageStatePath(roomId) {
   return `${IMAGE_STATE_PREFIX}/${roomId}.json`;
+}
+
+function strokeStatePath(roomId) {
+  return `${STROKE_STATE_PREFIX}/${roomId}.json`;
 }
 
 function normalizePoint(point) {
@@ -78,6 +84,13 @@ function getRoom(roomId) {
     room = {
       clients: new Map(),
       strokes: [],
+      strokesLoaded: false,
+      strokesClearedBeforeLoad: false,
+      strokeLoad: null,
+      strokePersistenceReady: false,
+      strokePersistenceDirty: false,
+      strokePersistenceQueue: Promise.resolve(),
+      strokePersistenceTimer: null,
       images: new Map(),
       imagesLoaded: false,
       imagesClearedBeforeLoad: false,
@@ -177,6 +190,17 @@ async function loadImages(roomId) {
     .slice(0, MAX_IMAGES);
 }
 
+async function loadStrokes(roomId) {
+  const result = await get(strokeStatePath(roomId), blobOptions());
+  if (!result) return [];
+  const payload = JSON.parse(await readStreamText(result.stream));
+  const storedStrokes = Array.isArray(payload?.strokes) ? payload.strokes : [];
+  return storedStrokes
+    .map((stroke) => normalizeStroke(stroke))
+    .filter(Boolean)
+    .slice(-MAX_STROKES);
+}
+
 function queueImagePersistence(roomId, room) {
   room.imagePersistenceDirty = true;
   if (!room.imagePersistenceReady || !room.imagesLoaded || room.imagePersistenceTimer) return;
@@ -203,6 +227,34 @@ function queueImagePersistence(roomId, room) {
         console.error('Draw image state persistence error:', error);
       });
   }, IMAGE_PERSISTENCE_DEBOUNCE_MS);
+}
+
+function queueStrokePersistence(roomId, room) {
+  room.strokePersistenceDirty = true;
+  if (!room.strokePersistenceReady || !room.strokesLoaded || room.strokePersistenceTimer) return;
+
+  room.strokePersistenceTimer = setTimeout(() => {
+    room.strokePersistenceTimer = null;
+    room.strokePersistenceDirty = false;
+    const snapshot = JSON.stringify({
+      version: 1,
+      updatedAt: new Date().toISOString(),
+      strokes: room.strokes,
+    });
+    room.strokePersistenceQueue = room.strokePersistenceQueue
+      .catch(() => {})
+      .then(() => put(strokeStatePath(roomId), snapshot, {
+        ...blobOptions(),
+        addRandomSuffix: false,
+        allowOverwrite: true,
+        cacheControlMaxAge: 60,
+        contentType: 'application/json',
+      }))
+      .catch((error) => {
+        room.strokePersistenceDirty = true;
+        console.error('Draw stroke state persistence error:', error);
+      });
+  }, STROKE_PERSISTENCE_DEBOUNCE_MS);
 }
 
 async function ensureImagesLoaded(roomId, room) {
@@ -234,6 +286,38 @@ async function ensureImagesLoaded(roomId, room) {
   await room.imageLoad;
 }
 
+async function ensureStrokesLoaded(roomId, room) {
+  if (room.strokesLoaded) return;
+  if (!getBlobToken()) {
+    room.strokesLoaded = true;
+    room.strokePersistenceReady = false;
+    return;
+  }
+  if (!room.strokeLoad) {
+    room.strokeLoad = loadStrokes(roomId)
+      .then((loadedStrokes) => {
+        if (!room.strokesClearedBeforeLoad) {
+          const currentStrokes = room.strokes;
+          const loadedKeys = new Set(loadedStrokes.map((stroke) => JSON.stringify(stroke)));
+          room.strokes = [
+            ...loadedStrokes,
+            ...currentStrokes.filter((stroke) => !loadedKeys.has(JSON.stringify(stroke))),
+          ].slice(-MAX_STROKES);
+        }
+        room.strokesLoaded = true;
+        room.strokePersistenceReady = true;
+        if (room.strokePersistenceDirty) queueStrokePersistence(roomId, room);
+        broadcast(room, { type: 'stroke:snapshot', strokes: room.strokes });
+      })
+      .catch((error) => {
+        room.strokesLoaded = true;
+        room.strokePersistenceReady = false;
+        console.error('Draw stroke state load error:', error);
+      });
+  }
+  await room.strokeLoad;
+}
+
 function broadcastPresence(room) {
   broadcast(room, { type: 'presence', count: room.clients.size });
 }
@@ -249,7 +333,7 @@ function getSnapshot(room) {
 }
 
 async function refreshClientSnapshot(roomId, room, socket) {
-  await ensureImagesLoaded(roomId, room);
+  await Promise.all([ensureImagesLoaded(roomId, room), ensureStrokesLoaded(roomId, room)]);
   send(socket, getSnapshot(room));
 }
 
@@ -275,6 +359,7 @@ socketServer.on('connection', (socket, request) => {
   send(socket, getSnapshot(room));
   broadcastPresence(room);
   void ensureImagesLoaded(roomId, room);
+  void ensureStrokesLoaded(roomId, room);
 
   socket.on('message', (raw) => {
     if (Buffer.byteLength(raw) > MAX_MESSAGE_BYTES) return;
@@ -337,14 +422,33 @@ socketServer.on('connection', (socket, request) => {
       if (!stroke) return;
       room.strokes.push(stroke);
       if (room.strokes.length > MAX_STROKES) room.strokes.splice(0, room.strokes.length - MAX_STROKES);
+      queueStrokePersistence(roomId, room);
       broadcast(room, { type: 'stroke', stroke }, socket);
+      return;
+    }
+
+    if (message.type === 'clear:drawings') {
+      room.strokes = [];
+      room.strokesClearedBeforeLoad = true;
+      queueStrokePersistence(roomId, room);
+      broadcast(room, { type: 'clear:drawings' });
+      return;
+    }
+
+    if (message.type === 'clear:images') {
+      room.images.clear();
+      room.imagesClearedBeforeLoad = true;
+      queueImagePersistence(roomId, room);
+      broadcast(room, { type: 'clear:images' });
       return;
     }
 
     if (message.type === 'clear') {
       room.strokes = [];
+      room.strokesClearedBeforeLoad = true;
       room.images.clear();
       room.imagesClearedBeforeLoad = true;
+      queueStrokePersistence(roomId, room);
       queueImagePersistence(roomId, room);
       broadcast(room, { type: 'clear' });
     }
