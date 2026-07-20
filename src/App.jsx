@@ -1,6 +1,7 @@
 import { lazy, Suspense } from 'react';
 import { Routes, Route } from 'react-router-dom';
 import HomePage from './pages/HomePage';
+import DrawPage from './pages/DrawPage';
 
 const WatchEntryPage = lazy(() => import('./pages/WatchEntryPage'));
 const MultiTrackPage = lazy(() => import('./pages/MultiTrackPage'));
@@ -27,6 +28,8 @@ export default function App() {
     <Suspense fallback={<PageLoading />}>
       <Routes>
         <Route path="/" element={<HomePage />} />
+        <Route path="/draw" element={<DrawPage />} />
+        <Route path="/draw/:roomId" element={<DrawPage />} />
         <Route path="/v/*" element={<WatchEntryPage />} />
         <Route path="/studio" element={<MultiTrackPage />} />
         <Route path="/studio/:id" element={<MultiTrackPage />} />

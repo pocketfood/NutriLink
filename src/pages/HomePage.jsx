@@ -291,6 +291,17 @@ function HomePage() {
           >
             Studio
           </span>
+          <a
+            href="/draw"
+            style={{
+              marginLeft: '1rem',
+              color: '#2f62cc',
+              textDecoration: 'none',
+              fontWeight: 'bold',
+            }}
+          >
+            Draw
+          </a>
         </div>
 
         <form onSubmit={handleSubmit}>
