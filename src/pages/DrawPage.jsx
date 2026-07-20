@@ -91,6 +91,14 @@ function getInitialImageSize(dimensions) {
   };
 }
 
+function getViewportSize(element) {
+  const rect = element?.getBoundingClientRect?.();
+  return {
+    width: Math.max(1, Number(window.innerWidth) || rect?.width || 1),
+    height: Math.max(1, Number(window.innerHeight) || rect?.height || 1),
+  };
+}
+
 function DrawPage() {
   const { roomId: routeRoomId } = useParams();
   const navigate = useNavigate();
@@ -140,20 +148,20 @@ function DrawPage() {
     if (!canvas) return;
     const context = canvas.getContext('2d');
     if (!context) return;
-    const rect = (stageRef.current || canvas).getBoundingClientRect();
-    context.clearRect(0, 0, rect.width, rect.height);
+    const size = getViewportSize(stageRef.current || canvas);
+    context.clearRect(0, 0, size.width, size.height);
     context.lineCap = 'round';
     context.lineJoin = 'round';
-    const brushScale = clamp(Math.min(rect.width, rect.height) / 720, 0.5, 1);
+    const brushScale = clamp(Math.min(size.width, size.height) / 720, 0.5, 1);
 
     strokesRef.current.forEach((stroke) => {
       if (!stroke.points?.length) return;
       context.strokeStyle = stroke.color;
-      context.lineWidth = stroke.size * brushScale;
+      context.lineWidth = clamp(Number(stroke.size) || 3, 1, 12) * brushScale;
       context.beginPath();
       stroke.points.forEach((point, index) => {
-        const x = point.x * rect.width;
-        const y = point.y * rect.height;
+        const x = point.x * size.width;
+        const y = point.y * size.height;
         if (index === 0) context.moveTo(x, y);
         else context.lineTo(x, y);
       });
@@ -165,9 +173,9 @@ function DrawPage() {
     const ratio = window.devicePixelRatio || 1;
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const rect = (stageRef.current || canvas).getBoundingClientRect();
-    canvas.width = Math.max(1, Math.round(rect.width * ratio));
-    canvas.height = Math.max(1, Math.round(rect.height * ratio));
+    const size = getViewportSize(stageRef.current || canvas);
+    canvas.width = Math.max(1, Math.round(size.width * ratio));
+    canvas.height = Math.max(1, Math.round(size.height * ratio));
     canvas.getContext('2d')?.setTransform(ratio, 0, 0, ratio, 0, 0);
     redraw();
   }, [redraw]);
@@ -229,12 +237,10 @@ function DrawPage() {
   };
 
   const getPoint = (event) => {
-    const board = stageRef.current || canvasRef.current;
-    if (!board) return null;
-    const rect = board.getBoundingClientRect();
+    const size = getViewportSize(stageRef.current || canvasRef.current);
     return {
-      x: Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width)),
-      y: Math.min(1, Math.max(0, (event.clientY - rect.top) / rect.height)),
+      x: Math.min(1, Math.max(0, event.clientX / size.width)),
+      y: Math.min(1, Math.max(0, event.clientY / size.height)),
     };
   };
 
