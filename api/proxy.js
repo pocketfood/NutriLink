@@ -40,6 +40,8 @@ const defaultAllowedHostEntries = [
   '*.akamaihd.net',
 ];
 
+const HTML_REDIRECT_HOSTS = new Set(['sys.4chan.org']);
+
 const configuredAllowedHostEntries = [
   process.env.AUDIO_PROXY_ALLOWED_HOSTS,
   process.env.MEDIA_PROXY_ALLOWED_HOSTS,
@@ -108,6 +110,48 @@ function getDownloadFilename(req) {
     .slice(0, 140);
 
   return safeFilename || 'nutrilink-download';
+}
+
+function decodeHtmlAttribute(value) {
+  return value
+    .replace(/&amp;/gi, '&')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/&#x2F;/gi, '/')
+    .replace(/&#47;/gi, '/');
+}
+
+function getHtmlRedirectTarget(html, baseUrl) {
+  const metaTags = html.match(/<meta\b[^>]*>/gi) || [];
+  for (const metaTag of metaTags) {
+    if (!/http-equiv\s*=\s*["']?refresh\b/i.test(metaTag)) continue;
+
+    const contentMatch = metaTag.match(/content\s*=\s*["']([^"']+)["']/i);
+    const refreshUrl = contentMatch?.[1]?.match(/\burl\s*=\s*["']?([^\s"']+)/i)?.[1];
+    if (!refreshUrl) continue;
+
+    try {
+      return new URL(decodeHtmlAttribute(refreshUrl), baseUrl);
+    } catch {
+      return null;
+    }
+  }
+
+  const canonicalMatch = html.match(
+    /<link\b[^>]*rel\s*=\s*["'][^"']*\bcanonical\b[^"']*["'][^>]*href\s*=\s*["']([^"']+)["']/i
+  );
+  if (!canonicalMatch?.[1]) return null;
+
+  try {
+    return new URL(decodeHtmlAttribute(canonicalMatch[1]), baseUrl);
+  } catch {
+    return null;
+  }
+}
+
+function isHtmlRedirectResponse(targetUrl, upstream) {
+  const contentType = upstream.headers.get('content-type') || '';
+  return HTML_REDIRECT_HOSTS.has(targetUrl.hostname.toLowerCase()) && /text\/html/i.test(contentType);
 }
 
 function isAllowedHost(targetUrl) {
@@ -196,7 +240,7 @@ export default async function handler(req, res) {
     return;
   }
 
-  const upstreamUrl = normalizeUpstreamUrl(parsed);
+  let upstreamUrl = normalizeUpstreamUrl(parsed);
 
   if (!isAllowedHost(upstreamUrl)) {
     res.status(403).json({ error: 'Proxy host not allowed' });
@@ -212,13 +256,34 @@ export default async function handler(req, res) {
   if (req.headers.range) upstreamHeaders.Range = req.headers.range;
 
   try {
-    const upstream = await fetch(upstreamUrl.toString(), {
+    const fetchUpstream = (targetUrl) => fetch(targetUrl.toString(), {
       method: req.method,
       headers: upstreamHeaders,
       redirect: 'follow',
     });
 
-    const shouldRewriteHls = req.method !== 'HEAD' && upstream.ok && isHlsPlaylistResponse(upstreamUrl, upstream);
+    let upstream = await fetchUpstream(upstreamUrl);
+    let upstreamResponseUrl = new URL(upstream.url || upstreamUrl.toString());
+    let upstreamText = null;
+
+    if (req.method !== 'HEAD' && upstream.ok && isHtmlRedirectResponse(upstreamResponseUrl, upstream)) {
+      upstreamText = await upstream.text();
+      const redirectTarget = getHtmlRedirectTarget(upstreamText, upstreamResponseUrl);
+
+      if (redirectTarget) {
+        if (!['http:', 'https:'].includes(redirectTarget.protocol) || !isAllowedHost(redirectTarget)) {
+          res.status(403).json({ error: 'Redirect target host not allowed' });
+          return;
+        }
+
+        upstreamUrl = redirectTarget;
+        upstream = await fetchUpstream(upstreamUrl);
+        upstreamResponseUrl = new URL(upstream.url || upstreamUrl.toString());
+        upstreamText = null;
+      }
+    }
+
+    const shouldRewriteHls = req.method !== 'HEAD' && upstream.ok && isHlsPlaylistResponse(upstreamResponseUrl, upstream);
 
     const passthroughHeaders = [
       'content-type',
@@ -248,8 +313,14 @@ export default async function handler(req, res) {
       return;
     }
 
+    if (upstreamText !== null) {
+      res.setHeader('content-length', Buffer.byteLength(upstreamText));
+      res.end(upstreamText);
+      return;
+    }
+
     if (shouldRewriteHls) {
-      const rewrittenPlaylist = rewriteHlsPlaylist(await upstream.text(), upstream.url || parsed.toString());
+      const rewrittenPlaylist = rewriteHlsPlaylist(await upstream.text(), upstreamResponseUrl.toString());
       res.setHeader('content-type', 'application/vnd.apple.mpegurl; charset=utf-8');
       res.setHeader('content-length', Buffer.byteLength(rewrittenPlaylist));
       res.end(rewrittenPlaylist);
