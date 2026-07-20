@@ -12,8 +12,8 @@ function send(socket, payload) {
 }
 
 function broadcast(room, payload, except = null) {
-  room.clients.forEach((client) => {
-    if (client !== except) send(client, payload);
+  room.clients.forEach((_client, clientSocket) => {
+    if (clientSocket !== except) send(clientSocket, payload);
   });
 }
 
@@ -49,10 +49,49 @@ function normalizeStroke(message) {
 function getRoom(roomId) {
   let room = rooms.get(roomId);
   if (!room) {
-    room = { clients: new Set(), strokes: [] };
+    room = { clients: new Map(), strokes: [] };
     rooms.set(roomId, room);
   }
   return room;
+}
+
+function createClientId() {
+  return `guest-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function normalizeName(name) {
+  if (typeof name !== 'string') return 'Guest';
+  const printable = Array.from(name)
+    .filter((character) => character.charCodeAt(0) > 31 && character.charCodeAt(0) !== 127)
+    .join('');
+  const normalized = printable.replace(/\s+/g, ' ').trim();
+  return normalized.slice(0, 24) || 'Guest';
+}
+
+function uniqueClientId(room, requestedId) {
+  const base = typeof requestedId === 'string' && /^[a-z0-9_-]{4,64}$/i.test(requestedId)
+    ? requestedId
+    : createClientId();
+  let id = base;
+  let suffix = 1;
+  const ids = new Set(Array.from(room.clients.values(), (client) => client.id));
+  while (ids.has(id)) {
+    id = `${base.slice(0, 56)}-${suffix}`;
+    suffix += 1;
+  }
+  return id;
+}
+
+function normalizeCursor(message, client) {
+  const point = message?.point;
+  if (!point || !Number.isFinite(Number(point.x)) || !Number.isFinite(Number(point.y))) return null;
+  return {
+    id: client.id,
+    name: client.name,
+    x: clamp(Number(point.x), 0, 1),
+    y: clamp(Number(point.y), 0, 1),
+    active: message.active !== false,
+  };
 }
 
 function broadcastPresence(room) {
@@ -76,8 +115,13 @@ socketServer.on('connection', (socket, request) => {
   }
 
   const room = getRoom(roomId);
-  room.clients.add(socket);
-  send(socket, { type: 'snapshot', strokes: room.strokes });
+  const client = { id: createClientId(), name: 'Guest', cursor: null };
+  room.clients.set(socket, client);
+  send(socket, {
+    type: 'snapshot',
+    strokes: room.strokes,
+    cursors: Array.from(room.clients.values(), ({ cursor }) => cursor).filter(Boolean),
+  });
   broadcastPresence(room);
 
   socket.on('message', (raw) => {
@@ -87,6 +131,21 @@ socketServer.on('connection', (socket, request) => {
     try {
       message = JSON.parse(raw.toString());
     } catch {
+      return;
+    }
+
+    if (message.type === 'join') {
+      client.id = uniqueClientId(room, message.id);
+      client.name = normalizeName(message.name);
+      send(socket, { type: 'joined', id: client.id });
+      return;
+    }
+
+    if (message.type === 'cursor') {
+      const cursor = normalizeCursor(message, client);
+      if (!cursor) return;
+      client.cursor = cursor.active ? cursor : null;
+      broadcast(room, { type: 'cursor', cursor }, socket);
       return;
     }
 
@@ -106,7 +165,14 @@ socketServer.on('connection', (socket, request) => {
   });
 
   socket.on('close', () => {
+    const closedClient = room.clients.get(socket);
     room.clients.delete(socket);
+    if (closedClient?.cursor) {
+      broadcast(room, {
+        type: 'cursor',
+        cursor: { ...closedClient.cursor, active: false },
+      });
+    }
     if (room.clients.size === 0) {
       rooms.delete(roomId);
       return;
