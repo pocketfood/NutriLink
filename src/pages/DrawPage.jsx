@@ -5,6 +5,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 const ROOM_PATTERN = /^[a-z0-9_-]{4,64}$/i;
 const COLORS = ['#111827', '#e05252', '#2f7fe6', '#35a56a', '#9b59b6', '#f39c12'];
 const IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
+const RESIZE_CORNERS = ['nw', 'ne', 'sw', 'se'];
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
@@ -437,11 +438,24 @@ function DrawPage() {
       return;
     }
 
-    let width = clamp(initial.width + deltaX, 0.04, 0.9);
-    let height = clamp(initial.height + deltaY, 0.04, 0.9);
-    width = Math.min(width, 1 - initial.x);
-    height = Math.min(height, 1 - initial.y);
-    if (width >= 0.04 && height >= 0.04) updateLocalImage(interaction.id, { width, height });
+    const minimumSize = 0.04;
+    const corner = interaction.mode.replace('resize-', '');
+    let left = initial.x;
+    let top = initial.y;
+    let right = initial.x + initial.width;
+    let bottom = initial.y + initial.height;
+
+    if (corner.includes('w')) left = clamp(point.x, 0, right - minimumSize);
+    if (corner.includes('e')) right = clamp(point.x, left + minimumSize, 1);
+    if (corner.includes('n')) top = clamp(point.y, 0, bottom - minimumSize);
+    if (corner.includes('s')) bottom = clamp(point.y, top + minimumSize, 1);
+
+    updateLocalImage(interaction.id, {
+      x: left,
+      y: top,
+      width: right - left,
+      height: bottom - top,
+    });
   };
 
   const saveName = () => {
@@ -744,14 +758,15 @@ function DrawPage() {
               }}
             >
               <img src={image.url} alt={image.name || 'Shared image'} draggable="false" style={imageStyle} />
-              {selected && (
+              {selected && RESIZE_CORNERS.map((corner) => (
                 <button
+                  key={corner}
                   type="button"
-                  aria-label="Resize image"
-                  onPointerDown={(event) => handleImagePointerDown(event, image, 'resize')}
-                  style={resizeHandleStyle}
+                  aria-label={`Resize image ${corner}`}
+                  onPointerDown={(event) => handleImagePointerDown(event, image, `resize-${corner}`)}
+                  style={{ ...resizeHandleStyle, ...resizeHandlePositions[corner] }}
                 />
-              )}
+              ))}
             </div>
           );
         })}
@@ -786,6 +801,8 @@ function DrawPage() {
 const pageStyle = {
   position: 'fixed',
   inset: 0,
+  width: '100vw',
+  height: '100dvh',
   overflow: 'hidden',
   background: '#fff',
   fontFamily: 'Arial, sans-serif',
@@ -943,6 +960,8 @@ const toolButtonStyle = {
 const canvasStageStyle = {
   position: 'absolute',
   inset: 0,
+  width: '100%',
+  height: '100%',
   background: '#fff',
   touchAction: 'none',
 };
@@ -967,11 +986,10 @@ const drawSurfaceStyle = {
 const imageFrameStyle = {
   position: 'absolute',
   zIndex: 3,
+  boxSizing: 'border-box',
   userSelect: 'none',
   touchAction: 'none',
   overflow: 'visible',
-  maxWidth: 'min(70vw, 520px)',
-  maxHeight: 'min(55vh, 420px)',
 };
 
 const imageStyle = {
@@ -985,8 +1003,6 @@ const imageStyle = {
 
 const resizeHandleStyle = {
   position: 'absolute',
-  right: '-7px',
-  bottom: '-7px',
   width: '14px',
   height: '14px',
   padding: 0,
@@ -995,6 +1011,13 @@ const resizeHandleStyle = {
   background: '#2f62cc',
   cursor: 'nwse-resize',
   boxShadow: '0 1px 4px rgba(0,0,0,0.35)',
+};
+
+const resizeHandlePositions = {
+  nw: { left: '-7px', top: '-7px', cursor: 'nwse-resize' },
+  ne: { right: '-7px', top: '-7px', cursor: 'nesw-resize' },
+  sw: { left: '-7px', bottom: '-7px', cursor: 'nesw-resize' },
+  se: { right: '-7px', bottom: '-7px', cursor: 'nwse-resize' },
 };
 
 const cursorStyle = {

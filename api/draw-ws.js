@@ -148,8 +148,8 @@ function normalizeImage(message) {
   const value = message?.image || message;
   if (!value || !IMAGE_ID_PATTERN.test(value.id) || !isPublicBlobUrl(value.url)) return null;
 
-  const width = clamp(Number(value.width), 0.04, 0.9);
-  const height = clamp(Number(value.height), 0.04, 0.9);
+  const width = clamp(Number(value.width), 0.04, 1);
+  const height = clamp(Number(value.height), 0.04, 1);
   const x = clamp(Number(value.x), 0, 1 - width);
   const y = clamp(Number(value.y), 0, 1 - height);
   if (![x, y, width, height].every(Number.isFinite)) return null;
