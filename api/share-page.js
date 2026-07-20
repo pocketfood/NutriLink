@@ -54,6 +54,28 @@ function toAbsoluteUrl(value, origin) {
   }
 }
 
+function isPublicBlobUrl(value) {
+  try {
+    const hostname = new URL(value).hostname.toLowerCase();
+    return hostname === 'public.blob.vercel-storage.com' || hostname.endsWith('.public.blob.vercel-storage.com');
+  } catch {
+    return false;
+  }
+}
+
+function getVideoPreviewUrl(value, origin) {
+  const absoluteUrl = toAbsoluteUrl(value, origin);
+  if (!absoluteUrl || isPublicBlobUrl(absoluteUrl)) return absoluteUrl;
+
+  try {
+    const parsed = new URL(absoluteUrl);
+    if (parsed.origin === origin && parsed.pathname === '/api/proxy') return absoluteUrl;
+    return toAbsoluteUrl(`/api/proxy?url=${encodeURIComponent(absoluteUrl)}`, origin);
+  } catch {
+    return null;
+  }
+}
+
 async function getVideoMetadata(id) {
   if (!id) return null;
   try {
@@ -76,7 +98,7 @@ async function getIndexHtml(origin) {
   return `<!doctype html><html lang="en"><head><meta charset="UTF-8" /><link rel="icon" href="/favicon/favicon.ico" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>NutriLink</title></head><body><div id="root"></div><script type="module" src="/src/main.jsx"></script></body></html>`;
 }
 
-function buildMetaTags({ title, description, image, pageUrl, videoUrl }) {
+function buildMetaTags({ title, description, image, pageUrl, videoUrl, videoWidth, videoHeight }) {
   const tags = [
     ['meta', 'property', 'og:site_name', 'NutriLink'],
     ['meta', 'property', 'og:type', videoUrl ? 'video.other' : 'website'],
@@ -84,6 +106,7 @@ function buildMetaTags({ title, description, image, pageUrl, videoUrl }) {
     ['meta', 'property', 'og:description', description],
     ['meta', 'property', 'og:url', pageUrl],
     ['meta', 'property', 'og:image', image],
+    ['meta', 'property', 'og:image:secure_url', image],
     ['meta', 'name', 'twitter:card', image ? 'summary_large_image' : 'summary'],
     ['meta', 'name', 'twitter:title', title],
     ['meta', 'name', 'twitter:description', description],
@@ -93,11 +116,15 @@ function buildMetaTags({ title, description, image, pageUrl, videoUrl }) {
   if (videoUrl) {
     tags.push(
       ['meta', 'property', 'og:video', videoUrl],
+      ['meta', 'property', 'og:video:url', videoUrl],
       ['meta', 'property', 'og:video:secure_url', videoUrl],
       ['meta', 'property', 'og:video:type', 'video/mp4'],
       ['meta', 'name', 'twitter:player:stream', videoUrl],
       ['meta', 'name', 'twitter:player:stream:content_type', 'video/mp4']
     );
+
+    if (videoWidth) tags.push(['meta', 'property', 'og:video:width', videoWidth]);
+    if (videoHeight) tags.push(['meta', 'property', 'og:video:height', videoHeight]);
   }
 
   return tags
@@ -132,9 +159,11 @@ export default async function handler(req, res) {
   const description = metadata?.userDescription || metadata?.description || DEFAULT_DESCRIPTION;
   const image = toAbsoluteUrl(metadata?.poster || '/nutrilink-logo.png', origin);
   const rawVideoUrl = metadata?.videoUrl || metadata?.url;
-  const videoUrl = rawVideoUrl && !isRawXUrl(rawVideoUrl) ? toAbsoluteUrl(rawVideoUrl, origin) : null;
+  const videoUrl = rawVideoUrl && !isRawXUrl(rawVideoUrl) ? getVideoPreviewUrl(rawVideoUrl, origin) : null;
+  const videoWidth = metadata?.width != null && Number.isFinite(Number(metadata.width)) ? Number(metadata.width) : null;
+  const videoHeight = metadata?.height != null && Number.isFinite(Number(metadata.height)) ? Number(metadata.height) : null;
   const indexHtml = await getIndexHtml(origin);
-  const metaTags = buildMetaTags({ title, description, image, pageUrl, videoUrl });
+  const metaTags = buildMetaTags({ title, description, image, pageUrl, videoUrl, videoWidth, videoHeight });
   const html = injectMeta(indexHtml, metaTags, title);
 
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
