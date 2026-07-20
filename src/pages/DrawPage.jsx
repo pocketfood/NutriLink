@@ -141,11 +141,12 @@ function DrawPage() {
     context.clearRect(0, 0, rect.width, rect.height);
     context.lineCap = 'round';
     context.lineJoin = 'round';
+    const brushScale = Math.max(0.6, Math.min(1, rect.width / 900));
 
     strokesRef.current.forEach((stroke) => {
       if (!stroke.points?.length) return;
       context.strokeStyle = stroke.color;
-      context.lineWidth = stroke.size;
+      context.lineWidth = stroke.size * brushScale;
       context.beginPath();
       stroke.points.forEach((point, index) => {
         const x = point.x * rect.width;
@@ -688,21 +689,21 @@ function DrawPage() {
 
       <div
         style={canvasStageStyle}
-        onPointerDown={handlePointerDown}
-        onPointerMove={handlePointerMove}
-        onPointerUp={finishStroke}
-        onPointerCancel={finishStroke}
-        onPointerEnter={(event) => {
-          if (toolMode === 'draw' && connectionState === 'connected') {
-            const point = getPoint(event);
-            if (point) sendCursor(point);
-          }
-        }}
-        onPointerLeave={handlePointerLeave}
       >
         <canvas
           ref={canvasRef}
           aria-hidden="true"
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={finishStroke}
+          onPointerCancel={finishStroke}
+          onPointerEnter={(event) => {
+            if (toolMode === 'draw' && connectionState === 'connected') {
+              const point = getPoint(event);
+              if (point) sendCursor(point);
+            }
+          }}
+          onPointerLeave={handlePointerLeave}
           style={{
             ...canvasStyle,
             zIndex: toolMode === 'draw' ? 3 : 1,
@@ -953,6 +954,8 @@ const imageFrameStyle = {
   userSelect: 'none',
   touchAction: 'none',
   overflow: 'visible',
+  maxWidth: 'min(70vw, 520px)',
+  maxHeight: 'min(55vh, 420px)',
 };
 
 const imageStyle = {
