@@ -292,6 +292,7 @@ function DrawPage() {
     let retryTimer;
     const connect = () => {
       if (cancelled) return;
+      if ([WebSocket.CONNECTING, WebSocket.OPEN].includes(socketRef.current?.readyState)) return;
       setConnectionState('connecting');
       const socket = new WebSocket(getSocketUrl(roomId));
       socketRef.current = socket;
@@ -350,6 +351,8 @@ function DrawPage() {
       };
       socket.onerror = () => setConnectionState('offline');
       socket.onclose = () => {
+        if (socketRef.current !== socket) return;
+        socketRef.current = null;
         if (cancelled) return;
         setCursors({});
         setParticipantCount(0);
@@ -358,24 +361,54 @@ function DrawPage() {
       };
     };
 
+    const resyncRoom = () => {
+      if (cancelled) return;
+      window.requestAnimationFrame(() => {
+        resizeCanvas();
+        window.requestAnimationFrame(resizeCanvas);
+      });
+
+      const socket = socketRef.current;
+      if (socket?.readyState === WebSocket.OPEN) {
+        send({ type: 'sync' });
+      } else if (!socket || socket.readyState === WebSocket.CLOSED) {
+        window.clearTimeout(retryTimer);
+        connect();
+      }
+    };
+
     connect();
+    const heartbeatTimer = window.setInterval(() => {
+      const socket = socketRef.current;
+      if (socket?.readyState === WebSocket.OPEN) send({ type: 'ping' });
+      else if (!socket || socket.readyState === WebSocket.CLOSED) connect();
+    }, 20_000);
+    window.addEventListener('focus', resyncRoom);
+    window.addEventListener('online', resyncRoom);
+    document.addEventListener('visibilitychange', resyncRoom);
     return () => {
       cancelled = true;
       window.clearTimeout(retryTimer);
+      window.clearInterval(heartbeatTimer);
+      window.removeEventListener('focus', resyncRoom);
+      window.removeEventListener('online', resyncRoom);
+      document.removeEventListener('visibilitychange', resyncRoom);
       socketRef.current?.close();
       socketRef.current = null;
     };
-  }, [clientId, redraw, replaceImages, roomId, roomState, send]);
+  }, [clientId, redraw, replaceImages, resizeCanvas, roomId, roomState, send]);
 
   useEffect(() => {
     resizeCanvas();
     window.addEventListener('resize', resizeCanvas);
+    window.visualViewport?.addEventListener('resize', resizeCanvas);
     const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(resizeCanvas);
     if (observer && canvasRef.current) observer.observe(canvasRef.current);
     if (observer && stageRef.current) observer.observe(stageRef.current);
     const frame = window.requestAnimationFrame(resizeCanvas);
     return () => {
       window.removeEventListener('resize', resizeCanvas);
+      window.visualViewport?.removeEventListener('resize', resizeCanvas);
       window.cancelAnimationFrame(frame);
       observer?.disconnect();
     };

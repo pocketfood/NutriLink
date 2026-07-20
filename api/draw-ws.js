@@ -13,6 +13,7 @@ const MAX_MESSAGE_BYTES = 256 * 1024;
 const IMAGE_ID_PATTERN = /^[a-z0-9_-]{4,64}$/i;
 const IMAGE_PERSISTENCE_DEBOUNCE_MS = 500;
 const STROKE_PERSISTENCE_DEBOUNCE_MS = 500;
+const HEARTBEAT_INTERVAL_MS = 25_000;
 
 function send(socket, payload) {
   if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(payload));
@@ -344,7 +345,24 @@ const server = createServer((_request, response) => {
 
 const socketServer = new WebSocketServer({ server });
 
+const heartbeatTimer = setInterval(() => {
+  socketServer.clients.forEach((socket) => {
+    if (socket.isAlive === false) {
+      socket.terminate();
+      return;
+    }
+    socket.isAlive = false;
+    socket.ping();
+  });
+}, HEARTBEAT_INTERVAL_MS);
+heartbeatTimer.unref?.();
+
 socketServer.on('connection', (socket, request) => {
+  socket.isAlive = true;
+  socket.on('pong', () => {
+    socket.isAlive = true;
+  });
+
   const requestUrl = new URL(request.url || '/', 'http://localhost');
   const roomId = requestUrl.searchParams.get('room') || '';
 
@@ -385,6 +403,11 @@ socketServer.on('connection', (socket, request) => {
 
     if (message.type === 'sync') {
       void refreshClientSnapshot(roomId, room, socket);
+      return;
+    }
+
+    if (message.type === 'ping') {
+      send(socket, { type: 'pong' });
       return;
     }
 
