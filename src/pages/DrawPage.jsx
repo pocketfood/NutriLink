@@ -295,6 +295,8 @@ function DrawPage() {
             replaceImages({ ...imagesRef.current, [message.image.id]: message.image });
           } else if (message.type === 'image:update' && message.image?.id) {
             replaceImages({ ...imagesRef.current, [message.image.id]: message.image });
+          } else if (message.type === 'image:snapshot') {
+            replaceImages(toImageMap(message.images));
           } else if (message.type === 'cursor' && message.cursor?.id) {
             setCursors((current) => {
               const next = { ...current };

@@ -4,13 +4,13 @@ import { WebSocket, WebSocketServer } from 'ws';
 
 const rooms = new Map();
 const ROOM_PATTERN = /^[a-z0-9_-]{4,64}$/i;
-const STATE_PREFIX = 'draw-state';
+const IMAGE_STATE_PREFIX = 'draw-images';
 const MAX_STROKES = 5000;
 const MAX_IMAGES = 100;
 const MAX_POINTS_PER_STROKE = 600;
 const MAX_MESSAGE_BYTES = 256 * 1024;
 const IMAGE_ID_PATTERN = /^[a-z0-9_-]{4,64}$/i;
-const PERSISTENCE_DEBOUNCE_MS = 500;
+const IMAGE_PERSISTENCE_DEBOUNCE_MS = 500;
 
 function send(socket, payload) {
   if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(payload));
@@ -37,8 +37,8 @@ function blobOptions() {
   return options;
 }
 
-function statePath(roomId) {
-  return `${STATE_PREFIX}/${roomId}.json`;
+function imageStatePath(roomId) {
+  return `${IMAGE_STATE_PREFIX}/${roomId}.json`;
 }
 
 function normalizePoint(point) {
@@ -72,80 +72,6 @@ async function readStreamText(stream) {
   return Buffer.concat(chunks).toString('utf8');
 }
 
-function restoreRoomState(payload) {
-  const strokes = (Array.isArray(payload?.strokes) ? payload.strokes : [])
-    .map((stroke) => normalizeStroke(stroke))
-    .filter(Boolean)
-    .slice(-MAX_STROKES);
-  const images = new Map();
-  (Array.isArray(payload?.images) ? payload.images : [])
-    .map((image) => normalizeImage(image))
-    .filter(Boolean)
-    .slice(0, MAX_IMAGES)
-    .forEach((image) => images.set(image.id, image));
-  return { strokes, images };
-}
-
-async function loadRoomState(roomId) {
-  const result = await get(statePath(roomId), blobOptions());
-  if (!result) return { strokes: [], images: new Map() };
-  const payload = JSON.parse(await readStreamText(result.stream));
-  return restoreRoomState(payload);
-}
-
-function queueRoomPersistence(roomId, room) {
-  if (!room.persistenceReady) return;
-  room.pendingSnapshot = JSON.stringify({
-    version: 1,
-    updatedAt: new Date().toISOString(),
-    strokes: room.strokes,
-    images: Array.from(room.images.values()),
-  });
-  if (room.persistenceTimer) return;
-  room.persistenceTimer = setTimeout(() => {
-    room.persistenceTimer = null;
-    const snapshot = room.pendingSnapshot;
-    room.pendingSnapshot = null;
-    if (!snapshot) return;
-    room.persistenceQueue = room.persistenceQueue
-      .catch(() => {})
-      .then(() => put(statePath(roomId), snapshot, {
-        ...blobOptions(),
-        addRandomSuffix: false,
-        allowOverwrite: true,
-        cacheControlMaxAge: 60,
-        contentType: 'application/json',
-      }))
-      .catch((error) => {
-        console.error('Draw room persistence error:', error);
-      });
-  }, PERSISTENCE_DEBOUNCE_MS);
-}
-
-async function ensureRoomState(roomId, room) {
-  if (room.persistenceLoaded) return;
-  if (!getBlobToken()) {
-    room.persistenceLoaded = true;
-    return;
-  }
-  if (!room.persistenceLoad) {
-    room.persistenceLoad = loadRoomState(roomId)
-      .then(({ strokes, images }) => {
-        room.strokes = strokes;
-        room.images = images;
-        room.persistenceReady = true;
-      })
-      .catch((error) => {
-        room.persistenceReady = false;
-        console.error('Draw room state load error:', error);
-      })
-      .finally(() => {
-        room.persistenceLoaded = true;
-      });
-  }
-  await room.persistenceLoad;
-}
-
 function getRoom(roomId) {
   let room = rooms.get(roomId);
   if (!room) {
@@ -153,12 +79,13 @@ function getRoom(roomId) {
       clients: new Map(),
       strokes: [],
       images: new Map(),
-      persistenceLoaded: false,
-      persistenceReady: false,
-      persistenceLoad: null,
-      persistenceQueue: Promise.resolve(),
-      persistenceTimer: null,
-      pendingSnapshot: null,
+      imagesLoaded: false,
+      imagesClearedBeforeLoad: false,
+      imageLoad: null,
+      imagePersistenceReady: false,
+      imagePersistenceDirty: false,
+      imagePersistenceQueue: Promise.resolve(),
+      imagePersistenceTimer: null,
     };
     rooms.set(roomId, room);
   }
@@ -238,6 +165,73 @@ function normalizeImage(message) {
   };
 }
 
+async function loadImages(roomId) {
+  const result = await get(imageStatePath(roomId), blobOptions());
+  if (!result) return [];
+  const payload = JSON.parse(await readStreamText(result.stream));
+  return (Array.isArray(payload?.images) ? payload.images : [])
+    .map((image) => normalizeImage(image))
+    .filter(Boolean)
+    .slice(0, MAX_IMAGES);
+}
+
+function queueImagePersistence(roomId, room) {
+  room.imagePersistenceDirty = true;
+  if (!room.imagePersistenceReady || !room.imagesLoaded || room.imagePersistenceTimer) return;
+
+  room.imagePersistenceTimer = setTimeout(() => {
+    room.imagePersistenceTimer = null;
+    room.imagePersistenceDirty = false;
+    const snapshot = JSON.stringify({
+      version: 1,
+      updatedAt: new Date().toISOString(),
+      images: Array.from(room.images.values()),
+    });
+    room.imagePersistenceQueue = room.imagePersistenceQueue
+      .catch(() => {})
+      .then(() => put(imageStatePath(roomId), snapshot, {
+        ...blobOptions(),
+        addRandomSuffix: false,
+        allowOverwrite: true,
+        cacheControlMaxAge: 60,
+        contentType: 'application/json',
+      }))
+      .catch((error) => {
+        room.imagePersistenceDirty = true;
+        console.error('Draw image state persistence error:', error);
+      });
+  }, IMAGE_PERSISTENCE_DEBOUNCE_MS);
+}
+
+async function ensureImagesLoaded(roomId, room) {
+  if (room.imagesLoaded) return;
+  if (!getBlobToken()) {
+    room.imagesLoaded = true;
+    room.imagePersistenceReady = false;
+    return;
+  }
+  if (!room.imageLoad) {
+    room.imageLoad = loadImages(roomId)
+      .then((loadedImages) => {
+        if (!room.imagesClearedBeforeLoad) {
+          loadedImages.forEach((image) => {
+            if (!room.images.has(image.id)) room.images.set(image.id, image);
+          });
+        }
+        room.imagesLoaded = true;
+        room.imagePersistenceReady = true;
+        if (room.imagePersistenceDirty) queueImagePersistence(roomId, room);
+        broadcast(room, { type: 'image:snapshot', images: Array.from(room.images.values()) });
+      })
+      .catch((error) => {
+        room.imagesLoaded = true;
+        room.imagePersistenceReady = false;
+        console.error('Draw image state load error:', error);
+      });
+  }
+  await room.imageLoad;
+}
+
 function broadcastPresence(room) {
   broadcast(room, { type: 'presence', count: room.clients.size });
 }
@@ -249,7 +243,7 @@ const server = createServer((_request, response) => {
 
 const socketServer = new WebSocketServer({ server });
 
-socketServer.on('connection', async (socket, request) => {
+socketServer.on('connection', (socket, request) => {
   const requestUrl = new URL(request.url || '/', 'http://localhost');
   const roomId = requestUrl.searchParams.get('room') || '';
 
@@ -261,20 +255,16 @@ socketServer.on('connection', async (socket, request) => {
   const room = getRoom(roomId);
   const client = { id: createClientId(), name: 'Guest', cursor: null };
   room.clients.set(socket, client);
-  const roomStateReady = ensureRoomState(roomId, room);
-  roomStateReady.then(() => {
-    if (socket.readyState !== WebSocket.OPEN) return;
-    send(socket, {
-      type: 'snapshot',
-      strokes: room.strokes,
-      images: Array.from(room.images.values()),
-      cursors: Array.from(room.clients.values(), ({ cursor }) => cursor).filter(Boolean),
-    });
-    broadcastPresence(room);
+  send(socket, {
+    type: 'snapshot',
+    strokes: room.strokes,
+    images: Array.from(room.images.values()),
+    cursors: Array.from(room.clients.values(), ({ cursor }) => cursor).filter(Boolean),
   });
+  broadcastPresence(room);
+  void ensureImagesLoaded(roomId, room);
 
-  socket.on('message', async (raw) => {
-    await roomStateReady;
+  socket.on('message', (raw) => {
     if (Buffer.byteLength(raw) > MAX_MESSAGE_BYTES) return;
 
     let message;
@@ -308,7 +298,7 @@ socketServer.on('connection', async (socket, request) => {
       const image = normalizeImage(message);
       if (!image || room.images.has(image.id)) return;
       room.images.set(image.id, image);
-      queueRoomPersistence(roomId, room);
+      queueImagePersistence(roomId, room);
       broadcast(room, { type: 'image:add', image });
       return;
     }
@@ -319,7 +309,7 @@ socketServer.on('connection', async (socket, request) => {
       const image = normalizeImage({ image: { ...existing, ...message } });
       if (!image || image.id !== existing.id || image.url !== existing.url) return;
       room.images.set(image.id, image);
-      queueRoomPersistence(roomId, room);
+      queueImagePersistence(roomId, room);
       broadcast(room, { type: 'image:update', image });
       return;
     }
@@ -329,7 +319,6 @@ socketServer.on('connection', async (socket, request) => {
       if (!stroke) return;
       room.strokes.push(stroke);
       if (room.strokes.length > MAX_STROKES) room.strokes.splice(0, room.strokes.length - MAX_STROKES);
-      queueRoomPersistence(roomId, room);
       broadcast(room, { type: 'stroke', stroke }, socket);
       return;
     }
@@ -337,7 +326,8 @@ socketServer.on('connection', async (socket, request) => {
     if (message.type === 'clear') {
       room.strokes = [];
       room.images.clear();
-      queueRoomPersistence(roomId, room);
+      room.imagesClearedBeforeLoad = true;
+      queueImagePersistence(roomId, room);
       broadcast(room, { type: 'clear' });
     }
   });
