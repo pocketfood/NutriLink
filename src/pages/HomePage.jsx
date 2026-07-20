@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { isXPostUrl, resolveXVideo } from '../utils/xPost';
 import { getTwitterPostText, getUserDisplayDescription } from '../utils/twitterMetadata';
+import { createVideoPoster } from '../utils/videoPoster';
 
 const BLOB_BASE_URL = 'https://ogoyhmlvdwypuizr.public.blob.vercel-storage.com/videos';
 const NUTRILINK_HOSTS = new Set(['nutrilink-xi.vercel.app', 'www.nutrilink-xi.vercel.app']);
@@ -110,8 +111,18 @@ function HomePage() {
     }
 
     const resolveItem = async (inputUrl) => {
-      if (mode !== 'video' || !isXPostUrl(inputUrl)) {
+      if (mode !== 'video') {
         return { url: inputUrl, filename, description };
+      }
+
+      if (!isXPostUrl(inputUrl)) {
+        const posterData = await createVideoPoster(inputUrl);
+        return {
+          url: inputUrl,
+          filename,
+          description,
+          ...(posterData ? { posterData } : {}),
+        };
       }
 
       const resolved = await resolveXVideo(inputUrl);
@@ -165,7 +176,12 @@ function HomePage() {
         });
 
       if (!items.length) throw new Error('That NutriLink does not contain any playable videos');
-      return items;
+
+      return Promise.all(items.map(async (item) => {
+        if (item.poster || item.type === 'audio') return item;
+        const posterData = await createVideoPoster(item.url);
+        return posterData ? { ...item, posterData } : item;
+      }));
     };
 
     const resolveInput = async (inputUrl) => {
