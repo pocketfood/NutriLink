@@ -11,6 +11,7 @@ const MAX_IMAGES = 100;
 const MAX_POINTS_PER_STROKE = 600;
 const MAX_MESSAGE_BYTES = 256 * 1024;
 const IMAGE_ID_PATTERN = /^[a-z0-9_-]{4,64}$/i;
+const PERSISTENCE_DEBOUNCE_MS = 500;
 
 function send(socket, payload) {
   if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(payload));
@@ -100,24 +101,31 @@ async function loadRoomState(roomId) {
 
 function queueRoomPersistence(roomId, room) {
   if (!room.persistenceReady) return;
-  const snapshot = JSON.stringify({
+  room.pendingSnapshot = JSON.stringify({
     version: 1,
     updatedAt: new Date().toISOString(),
     strokes: room.strokes,
     images: Array.from(room.images.values()),
   });
-  room.persistenceQueue = room.persistenceQueue
-    .catch(() => {})
-    .then(() => put(statePath(roomId), snapshot, {
-      ...blobOptions(),
-      addRandomSuffix: false,
-      allowOverwrite: true,
-      cacheControlMaxAge: 60,
-      contentType: 'application/json',
-    }))
-    .catch((error) => {
-      console.error('Draw room persistence error:', error);
-    });
+  if (room.persistenceTimer) return;
+  room.persistenceTimer = setTimeout(() => {
+    room.persistenceTimer = null;
+    const snapshot = room.pendingSnapshot;
+    room.pendingSnapshot = null;
+    if (!snapshot) return;
+    room.persistenceQueue = room.persistenceQueue
+      .catch(() => {})
+      .then(() => put(statePath(roomId), snapshot, {
+        ...blobOptions(),
+        addRandomSuffix: false,
+        allowOverwrite: true,
+        cacheControlMaxAge: 60,
+        contentType: 'application/json',
+      }))
+      .catch((error) => {
+        console.error('Draw room persistence error:', error);
+      });
+  }, PERSISTENCE_DEBOUNCE_MS);
 }
 
 async function ensureRoomState(roomId, room) {
@@ -155,6 +163,8 @@ function getRoom(roomId) {
       persistenceReady: false,
       persistenceLoad: null,
       persistenceQueue: Promise.resolve(),
+      persistenceTimer: null,
+      pendingSnapshot: null,
     };
     rooms.set(roomId, room);
   }

@@ -359,8 +359,11 @@ function DrawPage() {
   };
 
   const handlePointerDown = (event) => {
-    if (connectionState !== 'connected' || toolMode !== 'draw') return;
-    setSelectedImageId(null);
+    if (connectionState !== 'connected') return;
+    if (toolMode !== 'draw') {
+      setToolMode('draw');
+      setSelectedImageId(null);
+    }
     event.currentTarget.setPointerCapture?.(event.pointerId);
     const point = getPoint(event);
     if (!point) return;
@@ -793,6 +796,7 @@ function DrawPage() {
 
       <div style={footerStyle}>
         {participantCount} {participantCount === 1 ? 'user' : 'users'}
+        {` - ${toolMode === 'draw' ? 'draw mode' : 'move mode'}`}
         {connectionState !== 'connected' && ' - reconnecting...'}
         {uploadState !== 'idle' && ` - ${uploadState}`}
       </div>
