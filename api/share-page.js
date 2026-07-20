@@ -125,10 +125,13 @@ function buildMetaTags({ title, description, image, pageUrl, videoUrl, videoType
     ['meta', 'property', 'og:url', pageUrl],
     ['meta', 'property', 'og:image', image],
     ['meta', 'property', 'og:image:secure_url', image],
+    ['meta', 'property', 'og:image:alt', title],
+    ['meta', 'name', 'description', description],
     ['meta', 'name', 'twitter:card', image ? 'summary_large_image' : 'summary'],
     ['meta', 'name', 'twitter:title', title],
     ['meta', 'name', 'twitter:description', description],
     ['meta', 'name', 'twitter:image', image],
+    ['meta', 'name', 'twitter:image:alt', title],
   ];
 
   if (videoUrl) {
