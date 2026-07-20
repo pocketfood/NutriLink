@@ -176,7 +176,7 @@ export default async function handler(req, res) {
   const title = metadata?.filename || DEFAULT_TITLE;
   const description = metadata?.userDescription || metadata?.description || DEFAULT_DESCRIPTION;
   const image = toAbsoluteUrl(metadata?.poster || '/nutrilink-logo.png', origin);
-  const rawVideoUrl = metadata?.videoUrl || metadata?.url;
+  const rawVideoUrl = metadata?.type === 'remote-viewer' ? null : metadata?.videoUrl || metadata?.url;
   const sourceVideoUrl = rawVideoUrl && !isRawXUrl(rawVideoUrl) ? getVideoPreviewUrl(rawVideoUrl, origin) : null;
   const sourceVideoType = rawVideoUrl ? getVideoMimeType(rawVideoUrl) : null;
   const isWebm = sourceVideoType === 'video/webm';

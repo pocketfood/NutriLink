@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { isXPostUrl, resolveXVideo } from '../utils/xPost';
 import { getTwitterPostText, getUserDisplayDescription } from '../utils/twitterMetadata';
 import { createVideoPoster } from '../utils/videoPoster';
+import { getRemoteViewerUrl } from '../utils/remoteViewer';
 
 const BLOB_BASE_URL = 'https://ogoyhmlvdwypuizr.public.blob.vercel-storage.com/videos';
 const NUTRILINK_HOSTS = new Set(['nutrilink-xi.vercel.app', 'www.nutrilink-xi.vercel.app']);
@@ -111,6 +112,11 @@ function HomePage() {
     }
 
     const resolveItem = async (inputUrl) => {
+      const remoteViewerUrl = getRemoteViewerUrl(inputUrl);
+      if (remoteViewerUrl) {
+        return { url: remoteViewerUrl, filename, description, type: 'remote-viewer' };
+      }
+
       if (mode !== 'video') {
         return { url: inputUrl, filename, description };
       }
@@ -178,7 +184,7 @@ function HomePage() {
       if (!items.length) throw new Error('That NutriLink does not contain any playable videos');
 
       return Promise.all(items.map(async (item) => {
-        if (item.poster || item.type === 'audio') return item;
+        if (item.poster || item.type === 'audio' || item.type === 'remote-viewer') return item;
         const posterData = await createVideoPoster(item.url);
         return posterData ? { ...item, posterData } : item;
       }));
@@ -196,6 +202,9 @@ function HomePage() {
     try {
       const items = (await Promise.all(urls.map((u) => resolveInput(u)))).flat();
       if (!items.length) throw new Error('No playable links were found');
+      if (items.length > 1 && items.some((item) => item.type === 'remote-viewer')) {
+        throw new Error('Read-only viewer links must be shared one at a time.');
+      }
 
       const isSingle = items.length === 1;
       const payload = isSingle

@@ -21,6 +21,7 @@ import { isXPostUrl, resolveXVideo } from '../utils/xPost';
 import { getTwitterPostText, getUserDisplayDescription, isSameDescription } from '../utils/twitterMetadata';
 import { isHlsUrl } from '../utils/mediaUrls';
 import { sanitizeDownloadFilename, triggerDownload } from '../utils/download';
+import { getRemoteViewerUrl } from '../utils/remoteViewer';
 
 const STUDIO_TRACK_COLORS = [
   { wave: 'rgba(127,176,255,0.7)', progress: '#4da2ff' },
@@ -187,8 +188,11 @@ export default function WatchPage({ idOverride } = {}) {
       ? videoData.videos
       : [];
   const useStudioPlayback = studioTracks.length > 0;
+  const isRemoteViewer = videoData?.type === 'remote-viewer';
+  const remoteViewerUrl = isRemoteViewer ? getRemoteViewerUrl(videoData?.url) : null;
   const isTwitterVideo =
     !useStudioPlayback &&
+    !isRemoteViewer &&
     videoData &&
     (videoData.type === 'twitter' || isXPostUrl(videoData.sourceUrl) || isXPostUrl(videoData.url));
   const twitterSourceUrl = isTwitterVideo
@@ -199,7 +203,7 @@ export default function WatchPage({ idOverride } = {}) {
     ? null
     : videoData?.mixUrl || (videoData?.type === 'studio' && isAudioUrl(videoData?.url) ? videoData.url : null);
   const storedMediaUrl = hasStudioVideo ? videoData?.videoUrl : videoData?.url;
-  const playableMediaUrl = isTwitterVideo && isXPostUrl(storedMediaUrl) ? null : storedMediaUrl;
+  const playableMediaUrl = isRemoteViewer || (isTwitterVideo && isXPostUrl(storedMediaUrl)) ? null : storedMediaUrl;
   const isAudioContent =
     !useStudioPlayback && videoData && !hasStudioVideo && (videoData.type === 'audio' || isAudioUrl(videoData.url));
   const isAudioOnlyPlayback = isAudioContent || (useStudioPlayback && !hasStudioVideo);
@@ -1248,6 +1252,42 @@ export default function WatchPage({ idOverride } = {}) {
     return (
       <div style={{ textAlign: 'center', marginTop: '2rem', color: 'white' }}>
         <p>Loading video...</p>
+      </div>
+    );
+  }
+
+  if (isRemoteViewer) {
+    if (!remoteViewerUrl) {
+      return (
+        <div style={{ textAlign: 'center', marginTop: '2rem', color: 'white' }}>
+          <p>This read-only viewer link is invalid or has expired.</p>
+        </div>
+      );
+    }
+
+    return (
+      <div
+        style={{
+          position: 'relative',
+          width: '100%',
+          height: '100vh',
+          overflow: 'hidden',
+          backgroundColor: 'black',
+        }}
+      >
+        <iframe
+          title={videoData.filename || 'Read-only live view'}
+          src={remoteViewerUrl}
+          allow="autoplay; fullscreen"
+          tabIndex={-1}
+          style={{
+            display: 'block',
+            width: '100%',
+            height: '100%',
+            border: '0',
+            pointerEvents: 'none',
+          }}
+        />
       </div>
     );
   }
