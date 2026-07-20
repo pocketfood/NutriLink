@@ -149,7 +149,7 @@ function DrawPage() {
     strokesRef.current.forEach((stroke) => {
       if (!stroke.points?.length) return;
       context.strokeStyle = stroke.color;
-      context.lineWidth = clamp(Number(stroke.size) || 3, 1, 12);
+      context.lineWidth = clamp(Number(stroke.size) || 3, 1, 8);
       context.beginPath();
       stroke.points.forEach((point, index) => {
         const x = point.x * rect.width;
@@ -166,6 +166,7 @@ function DrawPage() {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const rect = canvas.getBoundingClientRect();
+    if (rect.width < 1 || rect.height < 1) return;
     canvas.width = Math.max(1, Math.round(rect.width * ratio));
     canvas.height = Math.max(1, Math.round(rect.height * ratio));
     canvas.getContext('2d')?.setTransform(ratio, 0, 0, ratio, 0, 0);
@@ -359,9 +360,12 @@ function DrawPage() {
     resizeCanvas();
     window.addEventListener('resize', resizeCanvas);
     const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(resizeCanvas);
+    if (observer && canvasRef.current) observer.observe(canvasRef.current);
     if (observer && stageRef.current) observer.observe(stageRef.current);
+    const frame = window.requestAnimationFrame(resizeCanvas);
     return () => {
       window.removeEventListener('resize', resizeCanvas);
+      window.cancelAnimationFrame(frame);
       observer?.disconnect();
     };
   }, [resizeCanvas]);
@@ -738,7 +742,7 @@ function DrawPage() {
             id="draw-brush-size"
             type="range"
             min="1"
-            max="12"
+            max="8"
             step="1"
             value={brushSize}
             onChange={(event) => setBrushSize(Number(event.target.value))}
@@ -1091,6 +1095,8 @@ const canvasStageStyle = {
 };
 
 const canvasStyle = {
+  position: 'absolute',
+  inset: 0,
   display: 'block',
   width: '100%',
   height: '100%',
