@@ -181,6 +181,21 @@ function isHlsPlaylistResponse(targetUrl, upstream) {
   return isHlsPlaylistUrl(targetUrl) || /mpegurl|vnd\.apple\.mpegurl/i.test(contentType);
 }
 
+function getMediaContentType(targetUrl, upstream) {
+  const upstreamType = upstream.headers.get('content-type') || '';
+  if (upstreamType && !/^(?:application\/octet-stream|binary\/octet-stream)\b/i.test(upstreamType)) {
+    return upstreamType;
+  }
+
+  const pathname = targetUrl.pathname.toLowerCase();
+  if (/\.webm(?:$|[?#])/.test(pathname)) return 'video/webm';
+  if (/\.mp4(?:$|[?#])/.test(pathname)) return 'video/mp4';
+  if (/\.m4v(?:$|[?#])/.test(pathname)) return 'video/mp4';
+  if (/\.mov(?:$|[?#])/.test(pathname)) return 'video/quicktime';
+  if (/\.m3u8?(?:$|[?#])/.test(pathname)) return 'application/vnd.apple.mpegurl';
+  return upstreamType || null;
+}
+
 function toProxiedUrl(value, baseUrl) {
   if (!value || /^(?:data|blob|about):/i.test(value)) return value;
   try {
@@ -289,14 +304,15 @@ export default async function handler(req, res) {
       'content-type',
       'content-range',
       'accept-ranges',
-      'content-disposition',
       'cache-control',
       'etag',
       'last-modified',
     ];
 
     passthroughHeaders.forEach((header) => {
-      const value = upstream.headers.get(header);
+      const value = header === 'content-type'
+        ? getMediaContentType(upstreamResponseUrl, upstream)
+        : upstream.headers.get(header);
       if (value) res.setHeader(header, value);
     });
 

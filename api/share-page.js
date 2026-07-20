@@ -76,6 +76,19 @@ function getVideoPreviewUrl(value, origin) {
   }
 }
 
+function getVideoMimeType(value) {
+  try {
+    const pathname = new URL(value).pathname.toLowerCase();
+    if (/\.webm$/.test(pathname)) return 'video/webm';
+    if (/\.mov$/.test(pathname)) return 'video/quicktime';
+    if (/\.m3u8?$/.test(pathname)) return 'application/vnd.apple.mpegurl';
+  } catch {
+    // Use the broadly supported MP4 type when the source has no recognizable extension.
+  }
+
+  return 'video/mp4';
+}
+
 async function getVideoMetadata(id) {
   if (!id) return null;
   try {
@@ -98,7 +111,7 @@ async function getIndexHtml(origin) {
   return `<!doctype html><html lang="en"><head><meta charset="UTF-8" /><link rel="icon" href="/favicon/favicon.ico" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>NutriLink</title></head><body><div id="root"></div><script type="module" src="/src/main.jsx"></script></body></html>`;
 }
 
-function buildMetaTags({ title, description, image, pageUrl, videoUrl, videoWidth, videoHeight }) {
+function buildMetaTags({ title, description, image, pageUrl, videoUrl, videoType, videoWidth, videoHeight }) {
   const tags = [
     ['meta', 'property', 'og:site_name', 'NutriLink'],
     ['meta', 'property', 'og:type', videoUrl ? 'video.other' : 'website'],
@@ -118,9 +131,9 @@ function buildMetaTags({ title, description, image, pageUrl, videoUrl, videoWidt
       ['meta', 'property', 'og:video', videoUrl],
       ['meta', 'property', 'og:video:url', videoUrl],
       ['meta', 'property', 'og:video:secure_url', videoUrl],
-      ['meta', 'property', 'og:video:type', 'video/mp4'],
+      ['meta', 'property', 'og:video:type', videoType],
       ['meta', 'name', 'twitter:player:stream', videoUrl],
-      ['meta', 'name', 'twitter:player:stream:content_type', 'video/mp4']
+      ['meta', 'name', 'twitter:player:stream:content_type', videoType]
     );
 
     if (videoWidth) tags.push(['meta', 'property', 'og:video:width', videoWidth]);
@@ -160,10 +173,11 @@ export default async function handler(req, res) {
   const image = toAbsoluteUrl(metadata?.poster || '/nutrilink-logo.png', origin);
   const rawVideoUrl = metadata?.videoUrl || metadata?.url;
   const videoUrl = rawVideoUrl && !isRawXUrl(rawVideoUrl) ? getVideoPreviewUrl(rawVideoUrl, origin) : null;
+  const videoType = rawVideoUrl ? getVideoMimeType(rawVideoUrl) : null;
   const videoWidth = metadata?.width != null && Number.isFinite(Number(metadata.width)) ? Number(metadata.width) : null;
   const videoHeight = metadata?.height != null && Number.isFinite(Number(metadata.height)) ? Number(metadata.height) : null;
   const indexHtml = await getIndexHtml(origin);
-  const metaTags = buildMetaTags({ title, description, image, pageUrl, videoUrl, videoWidth, videoHeight });
+  const metaTags = buildMetaTags({ title, description, image, pageUrl, videoUrl, videoType, videoWidth, videoHeight });
   const html = injectMeta(indexHtml, metaTags, title);
 
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
