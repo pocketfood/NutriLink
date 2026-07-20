@@ -1,8 +1,11 @@
+import { get, put } from '@vercel/blob';
 import { createServer } from 'node:http';
 import { WebSocket, WebSocketServer } from 'ws';
 
 const rooms = new Map();
 const ROOM_PATTERN = /^[a-z0-9_-]{4,64}$/i;
+const STATE_PREFIX = 'draw-state';
+const LAYER_COUNT = 6;
 const MAX_STROKES = 5000;
 const MAX_IMAGES = 100;
 const MAX_POINTS_PER_STROKE = 600;
@@ -21,6 +24,26 @@ function broadcast(room, payload, except = null) {
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
+}
+
+function getBlobToken() {
+  return process.env.VITE_BLOB_RW_TOKEN || process.env.BLOB_READ_WRITE_TOKEN;
+}
+
+function blobOptions() {
+  const options = { access: 'public' };
+  const token = getBlobToken();
+  if (token) options.token = token;
+  return options;
+}
+
+function statePath(roomId) {
+  return `${STATE_PREFIX}/${roomId}.json`;
+}
+
+function normalizeLayer(value, fallback = 0) {
+  if (!Number.isFinite(Number(value))) return fallback;
+  return Math.round(clamp(Number(value), 0, LAYER_COUNT - 1));
 }
 
 function normalizePoint(point) {
@@ -45,13 +68,94 @@ function normalizeStroke(message) {
     ? clamp(Number(message.size), 1, 40)
     : 4;
 
-  return { points, color, size };
+  return { points, color, size, layer: normalizeLayer(message.layer) };
+}
+
+async function readStreamText(stream) {
+  const chunks = [];
+  for await (const chunk of stream) chunks.push(Buffer.from(chunk));
+  return Buffer.concat(chunks).toString('utf8');
+}
+
+function restoreRoomState(payload) {
+  const strokes = (Array.isArray(payload?.strokes) ? payload.strokes : [])
+    .map((stroke) => normalizeStroke(stroke))
+    .filter(Boolean)
+    .slice(-MAX_STROKES);
+  const images = new Map();
+  (Array.isArray(payload?.images) ? payload.images : [])
+    .map((image) => normalizeImage(image))
+    .filter(Boolean)
+    .slice(0, MAX_IMAGES)
+    .forEach((image) => images.set(image.id, image));
+  return { strokes, images };
+}
+
+async function loadRoomState(roomId) {
+  const result = await get(statePath(roomId), blobOptions());
+  if (!result) return { strokes: [], images: new Map() };
+  const payload = JSON.parse(await readStreamText(result.stream));
+  return restoreRoomState(payload);
+}
+
+function queueRoomPersistence(roomId, room) {
+  if (!room.persistenceReady) return;
+  const snapshot = JSON.stringify({
+    version: 1,
+    updatedAt: new Date().toISOString(),
+    strokes: room.strokes,
+    images: Array.from(room.images.values()),
+  });
+  room.persistenceQueue = room.persistenceQueue
+    .catch(() => {})
+    .then(() => put(statePath(roomId), snapshot, {
+      ...blobOptions(),
+      addRandomSuffix: false,
+      allowOverwrite: true,
+      cacheControlMaxAge: 60,
+      contentType: 'application/json',
+    }))
+    .catch((error) => {
+      console.error('Draw room persistence error:', error);
+    });
+}
+
+async function ensureRoomState(roomId, room) {
+  if (room.persistenceLoaded) return;
+  if (!getBlobToken()) {
+    room.persistenceLoaded = true;
+    return;
+  }
+  if (!room.persistenceLoad) {
+    room.persistenceLoad = loadRoomState(roomId)
+      .then(({ strokes, images }) => {
+        room.strokes = strokes;
+        room.images = images;
+        room.persistenceReady = true;
+      })
+      .catch((error) => {
+        room.persistenceReady = false;
+        console.error('Draw room state load error:', error);
+      })
+      .finally(() => {
+        room.persistenceLoaded = true;
+      });
+  }
+  await room.persistenceLoad;
 }
 
 function getRoom(roomId) {
   let room = rooms.get(roomId);
   if (!room) {
-    room = { clients: new Map(), strokes: [], images: new Map() };
+    room = {
+      clients: new Map(),
+      strokes: [],
+      images: new Map(),
+      persistenceLoaded: false,
+      persistenceReady: false,
+      persistenceLoad: null,
+      persistenceQueue: Promise.resolve(),
+    };
     rooms.set(roomId, room);
   }
   return room;
@@ -127,6 +231,7 @@ function normalizeImage(message) {
     y,
     width,
     height,
+    layer: normalizeLayer(value.layer),
   };
 }
 
@@ -141,7 +246,7 @@ const server = createServer((_request, response) => {
 
 const socketServer = new WebSocketServer({ server });
 
-socketServer.on('connection', (socket, request) => {
+socketServer.on('connection', async (socket, request) => {
   const requestUrl = new URL(request.url || '/', 'http://localhost');
   const roomId = requestUrl.searchParams.get('room') || '';
 
@@ -153,15 +258,20 @@ socketServer.on('connection', (socket, request) => {
   const room = getRoom(roomId);
   const client = { id: createClientId(), name: 'Guest', cursor: null };
   room.clients.set(socket, client);
-  send(socket, {
-    type: 'snapshot',
-    strokes: room.strokes,
-    images: Array.from(room.images.values()),
-    cursors: Array.from(room.clients.values(), ({ cursor }) => cursor).filter(Boolean),
+  const roomStateReady = ensureRoomState(roomId, room);
+  roomStateReady.then(() => {
+    if (socket.readyState !== WebSocket.OPEN) return;
+    send(socket, {
+      type: 'snapshot',
+      strokes: room.strokes,
+      images: Array.from(room.images.values()),
+      cursors: Array.from(room.clients.values(), ({ cursor }) => cursor).filter(Boolean),
+    });
+    broadcastPresence(room);
   });
-  broadcastPresence(room);
 
-  socket.on('message', (raw) => {
+  socket.on('message', async (raw) => {
+    await roomStateReady;
     if (Buffer.byteLength(raw) > MAX_MESSAGE_BYTES) return;
 
     let message;
@@ -172,8 +282,12 @@ socketServer.on('connection', (socket, request) => {
     }
 
     if (message.type === 'join') {
-      client.id = uniqueClientId(room, message.id);
+      if (message.id !== client.id) client.id = uniqueClientId(room, message.id);
       client.name = normalizeName(message.name);
+      if (client.cursor) {
+        client.cursor = { ...client.cursor, id: client.id, name: client.name };
+        broadcast(room, { type: 'cursor', cursor: client.cursor });
+      }
       send(socket, { type: 'joined', id: client.id });
       return;
     }
@@ -191,6 +305,7 @@ socketServer.on('connection', (socket, request) => {
       const image = normalizeImage(message);
       if (!image || room.images.has(image.id)) return;
       room.images.set(image.id, image);
+      queueRoomPersistence(roomId, room);
       broadcast(room, { type: 'image:add', image });
       return;
     }
@@ -201,6 +316,7 @@ socketServer.on('connection', (socket, request) => {
       const image = normalizeImage({ image: { ...existing, ...message } });
       if (!image || image.id !== existing.id || image.url !== existing.url) return;
       room.images.set(image.id, image);
+      queueRoomPersistence(roomId, room);
       broadcast(room, { type: 'image:update', image });
       return;
     }
@@ -210,6 +326,7 @@ socketServer.on('connection', (socket, request) => {
       if (!stroke) return;
       room.strokes.push(stroke);
       if (room.strokes.length > MAX_STROKES) room.strokes.splice(0, room.strokes.length - MAX_STROKES);
+      queueRoomPersistence(roomId, room);
       broadcast(room, { type: 'stroke', stroke }, socket);
       return;
     }
@@ -217,6 +334,7 @@ socketServer.on('connection', (socket, request) => {
     if (message.type === 'clear') {
       room.strokes = [];
       room.images.clear();
+      queueRoomPersistence(roomId, room);
       broadcast(room, { type: 'clear' });
     }
   });

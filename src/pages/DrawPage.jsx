@@ -3,15 +3,12 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 
 const ROOM_PATTERN = /^[a-z0-9_-]{4,64}$/i;
+const LAYER_COUNT = 6;
 const COLORS = ['#111827', '#e05252', '#2f7fe6', '#35a56a', '#9b59b6', '#f39c12'];
 const IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
-}
-
-function createRoomId() {
-  return Math.random().toString(36).slice(2, 10);
 }
 
 function createClientId() {
@@ -33,6 +30,13 @@ function getStoredName() {
   } catch {
     return 'Guest';
   }
+}
+
+function normalizeLocalName(name) {
+  const printable = Array.from(name || '')
+    .filter((character) => character.charCodeAt(0) > 31 && character.charCodeAt(0) !== 127)
+    .join('');
+  return printable.replace(/\s+/g, ' ').trim().slice(0, 24) || 'Guest';
 }
 
 function getSocketUrl(roomId) {
@@ -75,15 +79,15 @@ function readImageDimensions(url) {
 
 function getInitialImageSize(dimensions) {
   const aspect = dimensions.width / Math.max(1, dimensions.height);
-  let width = 0.32;
+  let width = 0.24;
   let height = width / aspect;
-  if (height > 0.42) {
-    height = 0.42;
+  if (height > 0.3) {
+    height = 0.3;
     width = height * aspect;
   }
   return {
-    width: clamp(width, 0.08, 0.7),
-    height: clamp(height, 0.08, 0.7),
+    width: clamp(width, 0.08, 0.5),
+    height: clamp(height, 0.08, 0.5),
   };
 }
 
@@ -91,6 +95,9 @@ function DrawPage() {
   const { roomId: routeRoomId } = useParams();
   const navigate = useNavigate();
   const [roomId, setRoomId] = useState(() => (ROOM_PATTERN.test(routeRoomId || '') ? routeRoomId : ''));
+  const [roomState, setRoomState] = useState(() => (
+    routeRoomId ? (ROOM_PATTERN.test(routeRoomId) ? 'checking' : 'missing') : 'creating'
+  ));
   const [connectionState, setConnectionState] = useState('connecting');
   const [participantCount, setParticipantCount] = useState(0);
   const [color, setColor] = useState(COLORS[0]);
@@ -98,14 +105,20 @@ function DrawPage() {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
   const [uploadState, setUploadState] = useState('idle');
+  const [toolMode, setToolMode] = useState('draw');
+  const [activeLayer, setActiveLayer] = useState(0);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [clientName, setClientName] = useState(getStoredName);
+  const [nameDraft, setNameDraft] = useState(clientName);
+  const [nameMessage, setNameMessage] = useState('');
   const [cursors, setCursors] = useState({});
   const [images, setImages] = useState({});
   const [selectedImageId, setSelectedImageId] = useState(null);
   const [clientId] = useState(createClientId);
-  const [clientName] = useState(getStoredName);
-  const canvasRef = useRef(null);
+  const canvasRefs = useRef([]);
   const fileInputRef = useRef(null);
   const socketRef = useRef(null);
+  const clientNameRef = useRef(clientName);
   const strokesRef = useRef([]);
   const imagesRef = useRef({});
   const activeStrokeRef = useRef(null);
@@ -122,38 +135,42 @@ function DrawPage() {
   }, []);
 
   const redraw = useCallback(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const context = canvas.getContext('2d');
-    if (!context) return;
-    const rect = canvas.getBoundingClientRect();
-    context.clearRect(0, 0, rect.width, rect.height);
-    context.lineCap = 'round';
-    context.lineJoin = 'round';
+    canvasRefs.current.forEach((canvas, layer) => {
+      if (!canvas) return;
+      const context = canvas.getContext('2d');
+      if (!context) return;
+      const rect = canvas.getBoundingClientRect();
+      context.clearRect(0, 0, rect.width, rect.height);
+      context.lineCap = 'round';
+      context.lineJoin = 'round';
 
-    strokesRef.current.forEach((stroke) => {
-      if (!stroke.points?.length) return;
-      context.strokeStyle = stroke.color;
-      context.lineWidth = stroke.size;
-      context.beginPath();
-      stroke.points.forEach((point, index) => {
-        const x = point.x * rect.width;
-        const y = point.y * rect.height;
-        if (index === 0) context.moveTo(x, y);
-        else context.lineTo(x, y);
-      });
-      context.stroke();
+      strokesRef.current
+        .filter((stroke) => (stroke.layer || 0) === layer)
+        .forEach((stroke) => {
+          if (!stroke.points?.length) return;
+          context.strokeStyle = stroke.color;
+          context.lineWidth = stroke.size;
+          context.beginPath();
+          stroke.points.forEach((point, index) => {
+            const x = point.x * rect.width;
+            const y = point.y * rect.height;
+            if (index === 0) context.moveTo(x, y);
+            else context.lineTo(x, y);
+          });
+          context.stroke();
+        });
     });
   }, []);
 
   const resizeCanvas = useCallback(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const rect = canvas.getBoundingClientRect();
     const ratio = window.devicePixelRatio || 1;
-    canvas.width = Math.max(1, Math.round(rect.width * ratio));
-    canvas.height = Math.max(1, Math.round(rect.height * ratio));
-    canvas.getContext('2d')?.setTransform(ratio, 0, 0, ratio, 0, 0);
+    canvasRefs.current.forEach((canvas) => {
+      if (!canvas) return;
+      const rect = canvas.getBoundingClientRect();
+      canvas.width = Math.max(1, Math.round(rect.width * ratio));
+      canvas.height = Math.max(1, Math.round(rect.height * ratio));
+      canvas.getContext('2d')?.setTransform(ratio, 0, 0, ratio, 0, 0);
+    });
     redraw();
   }, [redraw]);
 
@@ -162,6 +179,10 @@ function DrawPage() {
       socketRef.current.send(JSON.stringify(message));
     }
   }, []);
+
+  useEffect(() => {
+    clientNameRef.current = clientName;
+  }, [clientName]);
 
   const sendCursor = (point, active = true) => {
     pendingCursorRef.current = { type: 'cursor', point, active };
@@ -193,7 +214,7 @@ function DrawPage() {
   };
 
   const getPoint = (event) => {
-    const canvas = canvasRef.current;
+    const canvas = canvasRefs.current[0];
     if (!canvas) return null;
     const rect = canvas.getBoundingClientRect();
     return {
@@ -203,14 +224,51 @@ function DrawPage() {
   };
 
   useEffect(() => {
-    if (roomId) return;
-    const nextRoomId = createRoomId();
-    setRoomId(nextRoomId);
-    navigate(`/draw/${nextRoomId}`, { replace: true });
-  }, [navigate, roomId]);
+    let cancelled = false;
+
+    if (routeRoomId) {
+      setRoomId(routeRoomId);
+      if (!ROOM_PATTERN.test(routeRoomId)) {
+        setRoomState('missing');
+        return () => { cancelled = true; };
+      }
+
+      setRoomState('checking');
+      fetch(`/api/draw-room?id=${encodeURIComponent(routeRoomId)}`)
+        .then((response) => {
+          if (!response.ok) throw new Error('Room not found');
+          return response.json();
+        })
+        .then(() => {
+          if (!cancelled) setRoomState('ready');
+        })
+        .catch(() => {
+          if (!cancelled) setRoomState('missing');
+        });
+
+      return () => { cancelled = true; };
+    }
+
+    setRoomId('');
+    setRoomState('creating');
+    fetch('/api/draw-room', { method: 'POST' })
+      .then((response) => {
+        if (!response.ok) throw new Error('Unable to create room');
+        return response.json();
+      })
+      .then(({ roomId: nextRoomId }) => {
+        if (cancelled || !ROOM_PATTERN.test(nextRoomId || '')) return;
+        navigate(`/draw/${nextRoomId}`, { replace: true });
+      })
+      .catch(() => {
+        if (!cancelled) setRoomState('missing');
+      });
+
+    return () => { cancelled = true; };
+  }, [navigate, routeRoomId]);
 
   useEffect(() => {
-    if (!roomId) return undefined;
+    if (!roomId || roomState !== 'ready') return undefined;
 
     let cancelled = false;
     let retryTimer;
@@ -221,7 +279,7 @@ function DrawPage() {
       socketRef.current = socket;
       socket.onopen = () => {
         setConnectionState('connected');
-        send({ type: 'join', id: clientId, name: clientName });
+        send({ type: 'join', id: clientId, name: clientNameRef.current });
       };
       socket.onmessage = (event) => {
         try {
@@ -274,7 +332,7 @@ function DrawPage() {
       socketRef.current?.close();
       socketRef.current = null;
     };
-  }, [clientId, clientName, redraw, replaceImages, roomId, send]);
+  }, [clientId, redraw, replaceImages, roomId, roomState, send]);
 
   useEffect(() => {
     resizeCanvas();
@@ -301,18 +359,18 @@ function DrawPage() {
   };
 
   const handlePointerDown = (event) => {
-    if (connectionState !== 'connected') return;
+    if (connectionState !== 'connected' || toolMode !== 'draw') return;
     setSelectedImageId(null);
     event.currentTarget.setPointerCapture?.(event.pointerId);
     const point = getPoint(event);
     if (!point) return;
     sendCursor(point);
     drawingRef.current = true;
-    activeStrokeRef.current = { points: [point], color, size: 4 };
+    activeStrokeRef.current = { points: [point], color, size: 4, layer: activeLayer };
   };
 
   const handlePointerMove = (event) => {
-    if (connectionState !== 'connected') return;
+    if (connectionState !== 'connected' || toolMode !== 'draw') return;
     const point = getPoint(event);
     if (!point) return;
     sendCursor(point);
@@ -339,6 +397,7 @@ function DrawPage() {
   };
 
   const handlePointerLeave = () => {
+    if (toolMode !== 'draw') return;
     finishStroke();
     sendCursor({ x: 0, y: 0 }, false);
   };
@@ -349,6 +408,8 @@ function DrawPage() {
     event.currentTarget.setPointerCapture?.(event.pointerId);
     const point = getPoint(event);
     if (!point) return;
+    setToolMode('select');
+    setActiveLayer(image.layer || 0);
     setSelectedImageId(image.id);
     imageInteractionRef.current = {
       id: image.id,
@@ -376,16 +437,31 @@ function DrawPage() {
       return;
     }
 
-    const aspect = initial.height / initial.width;
     let width = clamp(initial.width + deltaX, 0.04, 0.9);
-    let height = width * aspect;
-    if (height > 0.9) {
-      height = 0.9;
-      width = height / aspect;
-    }
+    let height = clamp(initial.height + deltaY, 0.04, 0.9);
     width = Math.min(width, 1 - initial.x);
     height = Math.min(height, 1 - initial.y);
     if (width >= 0.04 && height >= 0.04) updateLocalImage(interaction.id, { width, height });
+  };
+
+  const selectLayer = (layer) => {
+    setActiveLayer(layer);
+    if (selectedImageId) updateLocalImage(selectedImageId, { layer });
+  };
+
+  const saveName = () => {
+    const nextName = normalizeLocalName(nameDraft);
+    try {
+      window.localStorage.setItem('nutrilink-draw-name', nextName);
+    } catch {
+      // The name still applies for the current room if storage is unavailable.
+    }
+    setNameDraft(nextName);
+    setClientName(nextName);
+    clientNameRef.current = nextName;
+    send({ type: 'join', id: clientId, name: nextName });
+    setNameMessage('Saved');
+    window.setTimeout(() => setNameMessage(''), 1600);
   };
 
   const finishImageInteraction = (event) => {
@@ -433,6 +509,7 @@ function DrawPage() {
             y,
             width: size.width,
             height: size.height,
+            layer: activeLayer,
           },
         });
       }
@@ -484,6 +561,23 @@ function DrawPage() {
     }
   };
 
+  if (roomState !== 'ready') {
+    const roomMissing = roomState === 'missing';
+    return (
+      <div style={roomStatusPageStyle}>
+        <h1 style={{ margin: 0, fontSize: '1.5rem' }}>
+          {roomMissing ? 'Drawing room not found' : roomState === 'creating' ? 'Creating drawing room...' : 'Checking drawing room...'}
+        </h1>
+        <p style={{ maxWidth: '30rem', color: '#60708a', textAlign: 'center' }}>
+          {roomMissing
+            ? 'This link was not created by NutriLink or the room has been removed.'
+            : 'Please wait a moment.'}
+        </p>
+        {roomMissing && <Link to="/" style={roomStatusLinkStyle}>Return to NutriLink</Link>}
+      </div>
+    );
+  }
+
   return (
     <div
       style={pageStyle}
@@ -494,31 +588,123 @@ function DrawPage() {
       onDragLeave={() => setIsDragOver(false)}
       onDrop={handleDrop}
     >
-      <Link to="/" style={homeLinkStyle}>NutriLink</Link>
+      <Link to="/" style={homeLinkStyle} aria-label="Return to NutriLink home">
+        <img src="/nutrilink-logo.png" alt="NutriLink" style={homeLogoStyle} />
+      </Link>
 
-      <div style={toolbarStyle}>
-        {COLORS.map((option) => (
+      <button
+        type="button"
+        aria-expanded={isSettingsOpen}
+        aria-controls="draw-settings"
+        onClick={() => setIsSettingsOpen((open) => !open)}
+        style={settingsToggleStyle}
+      >
+        {isSettingsOpen ? 'Close' : 'Settings'}
+      </button>
+
+      <aside
+        id="draw-settings"
+        aria-hidden={!isSettingsOpen}
+        style={{
+          ...settingsDrawerStyle,
+          transform: isSettingsOpen ? 'translateX(0)' : 'translateX(100%)',
+          visibility: isSettingsOpen ? 'visible' : 'hidden',
+          pointerEvents: isSettingsOpen ? 'auto' : 'none',
+        }}
+      >
+        <div style={settingsHeaderStyle}>
+          <div>
+            <strong>Drawing settings</strong>
+            <div style={settingsHintStyle}>{participantCount} {participantCount === 1 ? 'user' : 'users'} in room</div>
+          </div>
+          <button type="button" onClick={() => setIsSettingsOpen(false)} style={closeButtonStyle} aria-label="Close settings">×</button>
+        </div>
+
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            saveName();
+          }}
+          style={settingsSectionStyle}
+        >
+          <label htmlFor="draw-name" style={settingsLabelStyle}>Your name</label>
+          <div style={nameRowStyle}>
+            <input
+              id="draw-name"
+              value={nameDraft}
+              maxLength={24}
+              onChange={(event) => setNameDraft(event.target.value)}
+              style={nameInputStyle}
+            />
+            <button type="submit" style={toolButtonStyle}>{nameMessage || 'Save'}</button>
+          </div>
+        </form>
+
+        <div style={settingsSectionStyle}>
+          <div style={settingsLabelStyle}>Brush color</div>
+          <div style={colorOptionsStyle}>
+            {COLORS.map((option) => (
+              <button
+                key={option}
+                type="button"
+                aria-label={`Choose ${option}`}
+                aria-pressed={color === option}
+                onClick={() => setColor(option)}
+                style={{
+                  ...colorButtonStyle,
+                  background: option,
+                  boxShadow: color === option ? '0 0 0 3px #fff, 0 0 0 5px #2f62cc' : 'none',
+                }}
+              />
+            ))}
+          </div>
+        </div>
+
+        <div style={settingsSectionStyle}>
+          <div style={settingsLabelStyle}>Active layer</div>
+          <div style={layerControlStyle} aria-label="Drawing layers">
+            {Array.from({ length: LAYER_COUNT }, (_, layer) => (
+              <button
+                key={layer}
+                type="button"
+                aria-label={`Layer ${layer + 1}`}
+                aria-pressed={activeLayer === layer}
+                onClick={() => selectLayer(layer)}
+                style={{
+                  ...layerButtonStyle,
+                  background: activeLayer === layer ? '#2f62cc' : '#edf2fa',
+                  color: activeLayer === layer ? '#fff' : '#17233a',
+                }}
+              >
+                {layer + 1}
+              </button>
+            ))}
+          </div>
+          <div style={settingsHintStyle}>{selectedImageId ? 'Selected image will move layers.' : 'New strokes use this layer.'}</div>
+        </div>
+
+        <div style={settingsActionsStyle}>
           <button
-            key={option}
             type="button"
-            aria-label={`Choose ${option}`}
-            aria-pressed={color === option}
-            onClick={() => setColor(option)}
-            style={{
-              ...colorButtonStyle,
-              background: option,
-              boxShadow: color === option ? '0 0 0 3px #fff, 0 0 0 5px #2f62cc' : 'none',
+            onClick={() => {
+              const nextMode = toolMode === 'draw' ? 'select' : 'draw';
+              setToolMode(nextMode);
+              if (nextMode === 'draw') setSelectedImageId(null);
             }}
-          />
-        ))}
-        <button type="button" onClick={() => fileInputRef.current?.click()} style={toolButtonStyle}>
-          {uploadState === 'uploading' ? 'Uploading...' : 'Add image'}
-        </button>
-        <button type="button" onClick={clearCanvas} style={toolButtonStyle}>Clear</button>
-        <button type="button" onClick={shareRoom} style={toolButtonStyle}>{copied ? 'Copied' : 'Share'}</button>
-        <button type="button" onClick={toggleFullscreen} style={toolButtonStyle}>
-          {isFullscreen ? 'Exit full screen' : 'Full screen'}
-        </button>
+            style={toolButtonStyle}
+          >
+            {toolMode === 'draw' ? 'Move images' : 'Draw'}
+          </button>
+          <button type="button" onClick={() => fileInputRef.current?.click()} style={toolButtonStyle}>
+            {uploadState === 'uploading' ? 'Uploading...' : 'Add image'}
+          </button>
+          <button type="button" onClick={clearCanvas} style={toolButtonStyle}>Clear</button>
+          <button type="button" onClick={shareRoom} style={toolButtonStyle}>{copied ? 'Copied' : 'Share'}</button>
+          <button type="button" onClick={toggleFullscreen} style={toolButtonStyle}>
+            {isFullscreen ? 'Exit full screen' : 'Full screen'}
+          </button>
+        </div>
+
         <input
           ref={fileInputRef}
           type="file"
@@ -527,24 +713,30 @@ function DrawPage() {
           onChange={handleFileInputChange}
           style={{ display: 'none' }}
         />
-      </div>
+      </aside>
 
-      <div style={canvasStageStyle}>
-        <canvas
-          ref={canvasRef}
-          onPointerDown={handlePointerDown}
-          onPointerMove={handlePointerMove}
-          onPointerUp={finishStroke}
-          onPointerCancel={finishStroke}
-          onPointerEnter={(event) => {
-            if (connectionState === 'connected') {
-              const point = getPoint(event);
-              if (point) sendCursor(point);
-            }
-          }}
-          onPointerLeave={handlePointerLeave}
-          style={canvasStyle}
-        />
+      <div
+        style={canvasStageStyle}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={finishStroke}
+        onPointerCancel={finishStroke}
+        onPointerEnter={(event) => {
+          if (toolMode === 'draw' && connectionState === 'connected') {
+            const point = getPoint(event);
+            if (point) sendCursor(point);
+          }
+        }}
+        onPointerLeave={handlePointerLeave}
+      >
+        {Array.from({ length: LAYER_COUNT }, (_, layer) => (
+          <canvas
+            key={layer}
+            ref={(canvas) => { canvasRefs.current[layer] = canvas; }}
+            aria-hidden="true"
+            style={{ ...canvasStyle, zIndex: layer * 2 + 1 }}
+          />
+        ))}
 
         {Object.values(images).map((image) => {
           const selected = image.id === selectedImageId;
@@ -560,11 +752,12 @@ function DrawPage() {
               onPointerCancel={finishImageInteraction}
               style={{
                 ...imageFrameStyle,
+                zIndex: (image.layer || 0) * 2,
+                pointerEvents: toolMode === 'select' ? 'auto' : 'none',
                 left: `${image.x * 100}%`,
                 top: `${image.y * 100}%`,
                 width: `${image.width * 100}%`,
                 height: `${image.height * 100}%`,
-                outline: selected ? '2px solid #2f62cc' : '1px solid rgba(17,24,39,0.15)',
                 cursor: selected ? 'move' : 'grab',
               }}
             >
@@ -617,33 +810,129 @@ const pageStyle = {
 
 const homeLinkStyle = {
   position: 'fixed',
-  top: '12px',
-  left: '14px',
+  top: '8px',
+  left: '10px',
   zIndex: 5,
-  color: '#2f62cc',
-  background: 'rgba(255,255,255,0.9)',
-  borderRadius: '6px',
-  padding: '0.3rem 0.45rem',
-  fontSize: '0.75rem',
+  display: 'block',
+  width: '64px',
+  height: '64px',
+  borderRadius: '8px',
+  background: 'rgba(255,255,255,0.88)',
   textDecoration: 'none',
 };
 
-const toolbarStyle = {
+const homeLogoStyle = {
+  display: 'block',
+  width: '100%',
+  height: '100%',
+  objectFit: 'contain',
+};
+
+const settingsToggleStyle = {
   position: 'fixed',
   top: '12px',
-  left: '50%',
-  zIndex: 5,
+  right: '12px',
+  zIndex: 31,
+  border: 0,
+  borderRadius: '7px',
+  padding: '0.45rem 0.65rem',
+  background: '#edf2fa',
+  color: '#17233a',
+  cursor: 'pointer',
+  fontSize: '0.75rem',
+  fontWeight: 700,
+  boxShadow: '0 2px 10px rgba(0,0,0,0.15)',
+};
+
+const settingsDrawerStyle = {
+  position: 'fixed',
+  top: 0,
+  right: 0,
+  bottom: 0,
+  zIndex: 30,
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '1rem',
+  width: '290px',
+  maxWidth: 'calc(100vw - 16px)',
+  boxSizing: 'border-box',
+  overflowY: 'auto',
+  padding: '4.5rem 1rem 1.25rem',
+  background: 'rgba(255,255,255,0.98)',
+  borderLeft: '1px solid #dbe3ef',
+  boxShadow: '-5px 0 22px rgba(0,0,0,0.14)',
+  transition: 'transform 180ms ease, visibility 180ms ease',
+};
+
+const settingsHeaderStyle = {
+  display: 'flex',
+  alignItems: 'flex-start',
+  justifyContent: 'space-between',
+  gap: '0.75rem',
+  color: '#17233a',
+};
+
+const closeButtonStyle = {
+  width: '26px',
+  height: '26px',
+  padding: 0,
+  border: 0,
+  borderRadius: '50%',
+  background: '#edf2fa',
+  color: '#17233a',
+  cursor: 'pointer',
+  fontSize: '1.1rem',
+  lineHeight: 1,
+};
+
+const settingsHintStyle = {
+  marginTop: '0.25rem',
+  color: '#60708a',
+  fontSize: '0.7rem',
+};
+
+const settingsSectionStyle = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '0.45rem',
+  paddingBottom: '0.9rem',
+  borderBottom: '1px solid #e5ebf3',
+};
+
+const settingsLabelStyle = {
+  color: '#17233a',
+  fontSize: '0.75rem',
+  fontWeight: 700,
+};
+
+const nameRowStyle = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: '0.4rem',
+};
+
+const nameInputStyle = {
+  minWidth: 0,
+  flex: 1,
+  boxSizing: 'border-box',
+  border: '1px solid #cbd6e5',
+  borderRadius: '6px',
+  padding: '0.4rem 0.5rem',
+  color: '#17233a',
+  fontSize: '0.8rem',
+};
+
+const colorOptionsStyle = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: '0.65rem',
+  padding: '0.35rem 0.25rem',
+};
+
+const settingsActionsStyle = {
   display: 'flex',
   flexWrap: 'wrap',
-  alignItems: 'center',
-  justifyContent: 'center',
-  gap: '0.55rem',
-  maxWidth: 'calc(100vw - 24px)',
-  padding: '0.55rem 0.7rem',
-  transform: 'translateX(-50%)',
-  background: 'rgba(255,255,255,0.92)',
-  borderRadius: '10px',
-  boxShadow: '0 3px 16px rgba(0,0,0,0.16)',
+  gap: '0.45rem',
 };
 
 const colorButtonStyle = {
@@ -672,9 +961,12 @@ const canvasStageStyle = {
   position: 'absolute',
   inset: 0,
   background: '#fff',
+  touchAction: 'none',
 };
 
 const canvasStyle = {
+  position: 'absolute',
+  inset: 0,
   display: 'block',
   width: '100%',
   height: '100%',
@@ -688,14 +980,13 @@ const imageFrameStyle = {
   userSelect: 'none',
   touchAction: 'none',
   overflow: 'visible',
-  background: '#fff',
 };
 
 const imageStyle = {
   display: 'block',
   width: '100%',
   height: '100%',
-  objectFit: 'contain',
+  objectFit: 'fill',
   pointerEvents: 'none',
   userSelect: 'none',
 };
@@ -716,7 +1007,7 @@ const resizeHandleStyle = {
 
 const cursorStyle = {
   position: 'absolute',
-  zIndex: 4,
+  zIndex: 20,
   display: 'flex',
   alignItems: 'center',
   gap: '0.25rem',
@@ -744,7 +1035,7 @@ const cursorLabelStyle = {
 const dropOverlayStyle = {
   position: 'absolute',
   inset: 0,
-  zIndex: 4,
+  zIndex: 19,
   display: 'grid',
   placeItems: 'center',
   background: 'rgba(47,98,204,0.12)',
@@ -764,6 +1055,48 @@ const footerStyle = {
   fontSize: '0.68rem',
   textAlign: 'center',
   pointerEvents: 'none',
+};
+
+const layerControlStyle = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: '0.2rem',
+  padding: '0.15rem 0.25rem',
+  borderRadius: '6px',
+  background: '#f5f7fb',
+};
+
+const layerButtonStyle = {
+  width: '20px',
+  height: '20px',
+  padding: 0,
+  border: 0,
+  borderRadius: '4px',
+  cursor: 'pointer',
+  fontSize: '0.65rem',
+  fontWeight: 700,
+};
+
+const roomStatusPageStyle = {
+  minHeight: '100vh',
+  display: 'flex',
+  flexDirection: 'column',
+  alignItems: 'center',
+  justifyContent: 'center',
+  gap: '0.75rem',
+  padding: '1.5rem',
+  background: '#f6f9ff',
+  color: '#17233a',
+  fontFamily: 'Arial, sans-serif',
+};
+
+const roomStatusLinkStyle = {
+  color: '#fff',
+  background: '#2f62cc',
+  borderRadius: '6px',
+  padding: '0.55rem 0.8rem',
+  textDecoration: 'none',
+  fontWeight: 700,
 };
 
 export default DrawPage;
