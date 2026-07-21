@@ -18,6 +18,7 @@ const TEXT_ID_PATTERN = /^[a-z0-9_-]{4,64}$/i;
 const IMAGE_PERSISTENCE_DEBOUNCE_MS = 500;
 const STROKE_PERSISTENCE_DEBOUNCE_MS = 500;
 const TEXT_PERSISTENCE_DEBOUNCE_MS = 500;
+const TEXT_PERSISTENCE_RETRY_MS = 2_000;
 const HEARTBEAT_INTERVAL_MS = 25_000;
 
 function send(socket, payload) {
@@ -117,6 +118,7 @@ function getRoom(roomId) {
       textPersistenceDirty: false,
       textPersistenceQueue: Promise.resolve(),
       textPersistenceTimer: null,
+      textRefresh: null,
     };
     rooms.set(roomId, room);
   }
@@ -222,6 +224,7 @@ function normalizeText(message) {
   return {
     id: value.id,
     text,
+    layer: value.layer === 'background' ? 'background' : 'top',
     x,
     y,
     width,
@@ -336,12 +339,18 @@ function queueTextPersistence(roomId, room) {
         ...blobOptions(),
         addRandomSuffix: false,
         allowOverwrite: true,
-        cacheControlMaxAge: 60,
+        cacheControlMaxAge: 0,
         contentType: 'application/json',
       }))
       .catch((error) => {
         room.textPersistenceDirty = true;
         console.error('Draw text state persistence error:', error);
+        if (!room.textPersistenceTimer) {
+          room.textPersistenceTimer = setTimeout(() => {
+            room.textPersistenceTimer = null;
+            queueTextPersistence(roomId, room);
+          }, TEXT_PERSISTENCE_RETRY_MS);
+        }
       });
   }, TEXT_PERSISTENCE_DEBOUNCE_MS);
 }
@@ -436,6 +445,31 @@ async function ensureTextsLoaded(roomId, room) {
   await room.textLoad;
 }
 
+async function refreshTextsFromBlob(roomId, room) {
+  if (!getBlobToken() || !room.textsLoaded || room.textPersistenceDirty || room.textRefresh) return room.textRefresh;
+
+  room.textRefresh = loadTexts(roomId)
+    .then((loadedTexts) => {
+      if (room.textsClearedBeforeLoad) return;
+      let changed = false;
+      loadedTexts.forEach((textField) => {
+        if (!room.texts.has(textField.id)) {
+          room.texts.set(textField.id, textField);
+          changed = true;
+        }
+      });
+      if (changed) broadcast(room, { type: 'text:snapshot', texts: Array.from(room.texts.values()) });
+    })
+    .catch((error) => {
+      console.error('Draw text state refresh error:', error);
+    })
+    .finally(() => {
+      room.textRefresh = null;
+    });
+
+  return room.textRefresh;
+}
+
 function broadcastPresence(room) {
   broadcast(room, { type: 'presence', count: room.clients.size });
 }
@@ -457,6 +491,7 @@ async function refreshClientSnapshot(roomId, room, socket) {
     ensureStrokesLoaded(roomId, room),
     ensureTextsLoaded(roomId, room),
   ]);
+  await refreshTextsFromBlob(roomId, room);
   send(socket, getSnapshot(room));
 }
 
@@ -496,11 +531,8 @@ socketServer.on('connection', (socket, request) => {
   const room = getRoom(roomId);
   const client = { id: createClientId(), name: 'Guest', cursor: null };
   room.clients.set(socket, client);
-  send(socket, getSnapshot(room));
   broadcastPresence(room);
-  void ensureImagesLoaded(roomId, room);
-  void ensureStrokesLoaded(roomId, room);
-  void ensureTextsLoaded(roomId, room);
+  void refreshClientSnapshot(roomId, room, socket);
 
   socket.on('message', (raw) => {
     if (Buffer.byteLength(raw) > MAX_MESSAGE_BYTES) return;
@@ -560,6 +592,13 @@ socketServer.on('connection', (socket, request) => {
       room.images.set(image.id, image);
       queueImagePersistence(roomId, room);
       broadcast(room, { type: 'image:update', image });
+      return;
+    }
+
+    if (message.type === 'image:delete') {
+      if (!room.images.delete(message.id)) return;
+      queueImagePersistence(roomId, room);
+      broadcast(room, { type: 'image:delete', id: message.id });
       return;
     }
 

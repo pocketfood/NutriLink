@@ -63,6 +63,34 @@ function isMobileViewport() {
     && window.matchMedia(MOBILE_MEDIA_QUERY).matches;
 }
 
+function drawWrappedText(context, value, x, y, maxWidth, lineHeight) {
+  const paragraphs = String(value || '').split('\n');
+  let currentY = y;
+  paragraphs.forEach((paragraph, paragraphIndex) => {
+    const words = paragraph.split(/\s+/).filter(Boolean);
+    let line = '';
+    if (!words.length) {
+      currentY += lineHeight;
+    } else {
+      words.forEach((word) => {
+        const candidate = line ? `${line} ${word}` : word;
+        if (line && context.measureText(candidate).width > maxWidth) {
+          context.fillText(line, x, currentY);
+          currentY += lineHeight;
+          line = word;
+        } else {
+          line = candidate;
+        }
+      });
+      if (line) {
+        context.fillText(line, x, currentY);
+        currentY += lineHeight;
+      }
+    }
+    if (paragraphIndex < paragraphs.length - 1 && words.length) currentY += lineHeight * 0.25;
+  });
+}
+
 function toCursorMap(cursors) {
   return (Array.isArray(cursors) ? cursors : []).reduce((map, cursor) => {
     if (cursor?.id && cursor.active !== false) map[cursor.id] = cursor;
@@ -126,6 +154,7 @@ function DrawPage() {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
   const [uploadState, setUploadState] = useState('idle');
+  const [screenshotState, setScreenshotState] = useState('');
   const [isMobile, setIsMobile] = useState(isMobileViewport);
   const [toolMode, setToolMode] = useState(() => (isMobileViewport() ? 'pan' : 'draw'));
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -158,6 +187,7 @@ function DrawPage() {
   const pendingImageUpdateRef = useRef(null);
   const textFrameRef = useRef(null);
   const pendingTextUpdateRef = useRef(null);
+  const objectLongPressRef = useRef(null);
 
   const replaceImages = useCallback((nextImages) => {
     imagesRef.current = nextImages;
@@ -289,6 +319,7 @@ function DrawPage() {
       type: 'text:update',
       id: textField.id,
       text: textField.text,
+      layer: textField.layer,
       x: textField.x,
       y: textField.y,
       width: textField.width,
@@ -316,6 +347,7 @@ function DrawPage() {
       type: 'text:update',
       id: textField.id,
       text: textField.text,
+      layer: textField.layer,
       x: textField.x,
       y: textField.y,
       width: textField.width,
@@ -333,6 +365,48 @@ function DrawPage() {
       x: Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width)),
       y: Math.min(1, Math.max(0, (event.clientY - rect.top) / rect.height)),
     };
+  };
+
+  const clearObjectLongPress = () => {
+    if (objectLongPressRef.current?.timer) {
+      window.clearTimeout(objectLongPressRef.current.timer);
+    }
+    objectLongPressRef.current = null;
+  };
+
+  const startObjectLongPress = (event, type, id) => {
+    if (!isMobile || toolMode !== 'pan' || event.pointerType === 'mouse') return;
+    clearObjectLongPress();
+    const press = {
+      id,
+      type,
+      startX: event.clientX,
+      startY: event.clientY,
+      timer: null,
+    };
+    press.timer = window.setTimeout(() => {
+      if (objectLongPressRef.current !== press) return;
+      objectLongPressRef.current = null;
+      setToolMode('select');
+      if (type === 'image') {
+        setSelectedImageId(id);
+        setSelectedTextId(null);
+        setEditingTextId(null);
+      } else {
+        setSelectedTextId(id);
+        setSelectedImageId(null);
+      }
+      setImageContextMenu({ type, id, x: event.clientX, y: event.clientY });
+    }, 550);
+    objectLongPressRef.current = press;
+  };
+
+  const cancelObjectLongPressOnMove = (event) => {
+    const press = objectLongPressRef.current;
+    if (!press) return;
+    if (Math.hypot(event.clientX - press.startX, event.clientY - press.startY) > 8) {
+      clearObjectLongPress();
+    }
   };
 
   useEffect(() => {
@@ -435,6 +509,12 @@ function DrawPage() {
             replaceImages({ ...imagesRef.current, [message.image.id]: message.image });
           } else if (message.type === 'image:update' && message.image?.id) {
             replaceImages({ ...imagesRef.current, [message.image.id]: message.image });
+          } else if (message.type === 'image:delete' && message.id) {
+            const nextImages = { ...imagesRef.current };
+            delete nextImages[message.id];
+            replaceImages(nextImages);
+            setSelectedImageId(null);
+            setImageContextMenu(null);
           } else if (message.type === 'image:snapshot') {
             replaceImages(toImageMap(message.images));
           } else if (message.type === 'text:add' && message.text?.id) {
@@ -520,7 +600,7 @@ function DrawPage() {
     if (observer && canvasRef.current) observer.observe(canvasRef.current);
     if (observer && stageRef.current) observer.observe(stageRef.current);
     const frame = window.requestAnimationFrame(resizeCanvas);
-      return () => {
+    return () => {
       window.removeEventListener('resize', resizeCanvas);
       window.visualViewport?.removeEventListener('resize', resizeCanvas);
       window.cancelAnimationFrame(frame);
@@ -533,6 +613,7 @@ function DrawPage() {
     document.addEventListener('fullscreenchange', updateFullscreenState);
     return () => {
       document.removeEventListener('fullscreenchange', updateFullscreenState);
+      clearObjectLongPress();
       if (cursorFrameRef.current !== null) window.cancelAnimationFrame(cursorFrameRef.current);
       if (imageFrameRef.current !== null) window.cancelAnimationFrame(imageFrameRef.current);
       if (textFrameRef.current !== null) window.cancelAnimationFrame(textFrameRef.current);
@@ -620,6 +701,10 @@ function DrawPage() {
   const handleImagePointerDown = (event, image, mode = 'move') => {
     if (connectionState !== 'connected') return;
     if (event.button !== 0) return;
+    if (isMobile && toolMode === 'pan') {
+      startObjectLongPress(event, 'image', image.id);
+      return;
+    }
     event.stopPropagation();
     setImageContextMenu(null);
     event.currentTarget.setPointerCapture?.(event.pointerId);
@@ -640,11 +725,15 @@ function DrawPage() {
   };
 
   const handleImageContextMenu = (event, image) => {
+    if (!isMobile && toolMode !== 'select') return;
     event.preventDefault();
     event.stopPropagation();
+    clearObjectLongPress();
     setToolMode('select');
     setSelectedImageId(image.id);
-    setImageContextMenu({ id: image.id, x: event.clientX, y: event.clientY });
+    setSelectedTextId(null);
+    setEditingTextId(null);
+    setImageContextMenu({ type: 'image', id: image.id, x: event.clientX, y: event.clientY });
   };
 
   const setImageLayer = (id, layer) => {
@@ -653,7 +742,33 @@ function DrawPage() {
     setImageContextMenu(null);
   };
 
+  const setTextLayer = (id, layer) => {
+    if (!textsRef.current[id]) return;
+    updateLocalText(id, { layer: layer === 'background' ? 'background' : 'top' });
+    setImageContextMenu(null);
+  };
+
+  const removeContextObject = () => {
+    if (!imageContextMenu) return;
+    if (imageContextMenu.type === 'text') {
+      const nextTexts = { ...textsRef.current };
+      delete nextTexts[imageContextMenu.id];
+      replaceTexts(nextTexts);
+      send({ type: 'text:delete', id: imageContextMenu.id });
+      setSelectedTextId(null);
+      setEditingTextId(null);
+    } else {
+      const nextImages = { ...imagesRef.current };
+      delete nextImages[imageContextMenu.id];
+      replaceImages(nextImages);
+      send({ type: 'image:delete', id: imageContextMenu.id });
+      setSelectedImageId(null);
+    }
+    setImageContextMenu(null);
+  };
+
   const handleImagePointerMove = (event) => {
+    cancelObjectLongPressOnMove(event);
     const point = getPoint(event);
     if (!point) return;
     sendCursor(point, true, 'move');
@@ -695,6 +810,10 @@ function DrawPage() {
   const handleTextPointerDown = (event, textField) => {
     if (connectionState !== 'connected' || event.button !== 0) return;
     if (event.target.closest?.('textarea')) return;
+    if (isMobile && toolMode === 'pan') {
+      startObjectLongPress(event, 'text', textField.id);
+      return;
+    }
     event.stopPropagation();
     setImageContextMenu(null);
     setToolMode('select');
@@ -713,7 +832,19 @@ function DrawPage() {
     };
   };
 
+  const handleTextContextMenu = (event, textField) => {
+    if (!isMobile && toolMode !== 'select') return;
+    event.preventDefault();
+    event.stopPropagation();
+    clearObjectLongPress();
+    setToolMode('select');
+    setSelectedTextId(textField.id);
+    setSelectedImageId(null);
+    setImageContextMenu({ type: 'text', id: textField.id, x: event.clientX, y: event.clientY });
+  };
+
   const handleTextPointerMove = (event) => {
+    cancelObjectLongPressOnMove(event);
     const point = getPoint(event);
     if (!point) return;
     sendCursor(point, true, 'move');
@@ -730,6 +861,7 @@ function DrawPage() {
   };
 
   const finishTextInteraction = (event) => {
+    clearObjectLongPress();
     const interaction = textInteractionRef.current;
     if (!interaction) return;
     sendTextUpdateNow(textsRef.current[interaction.id]);
@@ -777,6 +909,7 @@ function DrawPage() {
       height: 0.1,
       fontSize: 32,
       color: color,
+      layer: 'top',
     };
     replaceTexts({ ...textsRef.current, [textField.id]: textField });
     setSelectedImageId(null);
@@ -813,6 +946,7 @@ function DrawPage() {
   };
 
   const finishImageInteraction = (event) => {
+    clearObjectLongPress();
     const interaction = imageInteractionRef.current;
     if (!interaction) return;
     sendImageUpdateNow(imagesRef.current[interaction.id]);
@@ -905,6 +1039,126 @@ function DrawPage() {
     } catch {
       window.prompt('Copy this drawing room link:', shareUrl);
     }
+  };
+
+  const createScreenshotBlob = async () => {
+    const stage = stageRef.current;
+    if (!stage) throw new Error('Drawing board is not ready');
+
+    const width = Math.max(1, Math.round(stage.offsetWidth || stage.getBoundingClientRect().width));
+    const height = Math.max(1, Math.round(stage.offsetHeight || stage.getBoundingClientRect().height));
+    const ratio = Math.min(window.devicePixelRatio || 1, 2);
+    const screenshot = document.createElement('canvas');
+    screenshot.width = Math.max(1, Math.round(width * ratio));
+    screenshot.height = Math.max(1, Math.round(height * ratio));
+    const context = screenshot.getContext('2d');
+    if (!context) throw new Error('Unable to create screenshot');
+    context.setTransform(ratio, 0, 0, ratio, 0, 0);
+    context.fillStyle = '#fff';
+    context.fillRect(0, 0, width, height);
+
+    const orderedImages = Object.values(imagesRef.current).sort((first, second) => {
+      if (first.layer === second.layer) return 0;
+      return first.layer === 'background' ? -1 : 1;
+    });
+    const imageElements = Array.from(stage.querySelectorAll('img[data-image-id]'));
+    for (const image of orderedImages) {
+      const imageElement = imageElements.find((element) => element.dataset.imageId === image.id);
+      if (!imageElement) continue;
+      if (!imageElement.complete) {
+        await new Promise((resolve) => {
+          imageElement.addEventListener('load', resolve, { once: true });
+          imageElement.addEventListener('error', resolve, { once: true });
+        });
+      }
+      if (imageElement.naturalWidth < 1) continue;
+      context.drawImage(
+        imageElement,
+        image.x * width,
+        image.y * height,
+        image.width * width,
+        image.height * height,
+      );
+      if (image.layer === 'background') context.globalCompositeOperation = 'source-over';
+    }
+
+    context.globalCompositeOperation = 'source-over';
+    context.lineCap = 'round';
+    context.lineJoin = 'round';
+    strokesRef.current.forEach((stroke) => {
+      if (!stroke.points?.length) return;
+      context.strokeStyle = stroke.color;
+      context.lineWidth = clamp(Number(stroke.size) || 4, 1, 24);
+      context.beginPath();
+      stroke.points.forEach((point, index) => {
+        const x = point.x * width;
+        const y = point.y * height;
+        if (index === 0) context.moveTo(x, y);
+        else context.lineTo(x, y);
+      });
+      context.stroke();
+    });
+
+    const logo = Array.from(document.querySelectorAll('img')).find((image) => image.alt === 'NutriLink');
+    if (logo?.complete && logo.naturalWidth > 0) context.drawImage(logo, 10, 8, 64, 64);
+
+    Object.values(textsRef.current).forEach((textField) => {
+      const fontSize = clamp(Number(textField.fontSize) || 32, 8, 120);
+      context.font = `${fontSize}px Arial, sans-serif`;
+      context.fillStyle = textField.color || '#111827';
+      context.textBaseline = 'top';
+      drawWrappedText(
+        context,
+        textField.text,
+        textField.x * width + 4,
+        textField.y * height + 4,
+        Math.max(1, textField.width * width - 8),
+        fontSize * 1.2,
+      );
+    });
+
+    return new Promise((resolve, reject) => {
+      screenshot.toBlob((blob) => {
+        if (blob) resolve(blob);
+        else reject(new Error('Unable to encode screenshot'));
+      }, 'image/png');
+    });
+  };
+
+  const saveScreenshot = async () => {
+    try {
+      const blob = await createScreenshotBlob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `nutrilink-drawing-${roomId}.png`;
+      link.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      setScreenshotState('saved');
+    } catch (error) {
+      console.error('Drawing screenshot failed:', error);
+      setScreenshotState('failed');
+    }
+    window.setTimeout(() => setScreenshotState(''), 2200);
+  };
+
+  const copyScreenshot = async () => {
+    if (!navigator.clipboard?.write || typeof window.ClipboardItem === 'undefined') {
+      setScreenshotState('clipboard unavailable');
+      window.setTimeout(() => setScreenshotState(''), 2200);
+      return;
+    }
+    try {
+      const blob = await createScreenshotBlob();
+      await navigator.clipboard.write([
+        new window.ClipboardItem({ 'image/png': blob }),
+      ]);
+      setScreenshotState('copied');
+    } catch (error) {
+      console.error('Copy drawing screenshot failed:', error);
+      setScreenshotState('failed');
+    }
+    window.setTimeout(() => setScreenshotState(''), 2200);
   };
 
   const toggleFullscreen = async () => {
@@ -1071,6 +1325,14 @@ function DrawPage() {
           <button type="button" onClick={clearDrawings} style={toolButtonStyle}>Clear all drawings</button>
           <button type="button" onClick={clearImages} style={toolButtonStyle}>Clear all images</button>
           <button type="button" onClick={shareRoom} style={toolButtonStyle}>{copied ? 'Copied' : 'Share'}</button>
+          <button type="button" onClick={saveScreenshot} style={toolButtonStyle}>
+            {screenshotState === 'saved' ? 'Saved' : screenshotState === 'failed' ? 'Screenshot failed' : 'Save screenshot'}
+          </button>
+          <button type="button" onClick={copyScreenshot} style={toolButtonStyle}>
+            {screenshotState === 'copied'
+              ? 'Copied'
+              : screenshotState === 'clipboard unavailable' ? 'Clipboard unavailable' : 'Copy screenshot'}
+          </button>
           <button type="button" onClick={toggleFullscreen} style={toolButtonStyle}>
             {isFullscreen ? 'Exit full screen' : 'Full screen'}
           </button>
@@ -1140,13 +1402,17 @@ function DrawPage() {
               onContextMenu={(event) => handleImageContextMenu(event, image)}
               onPointerEnter={handleImagePointerMove}
               onPointerMove={handleImagePointerMove}
-              onPointerLeave={() => handleCursorLeave('move')}
+              onPointerLeave={() => {
+                clearObjectLongPress();
+                handleCursorLeave('move');
+              }}
               onPointerUp={finishImageInteraction}
               onPointerCancel={finishImageInteraction}
               style={{
                 ...imageFrameStyle,
                 zIndex: image.layer === 'background' ? 1 : 3,
-                pointerEvents: toolMode === 'select' ? 'auto' : 'none',
+                pointerEvents: toolMode === 'select' || (isMobile && toolMode === 'pan') ? 'auto' : 'none',
+                touchAction: isMobile && toolMode === 'pan' ? 'auto' : 'none',
                 left: `${image.x * 100}%`,
                 top: `${image.y * 100}%`,
                 width: `${image.width * 100}%`,
@@ -1154,7 +1420,14 @@ function DrawPage() {
                 cursor: selected ? 'move' : 'grab',
               }}
             >
-              <img src={image.url} alt={image.name || 'Shared image'} draggable="false" style={imageStyle} />
+              <img
+                src={image.url}
+                alt={image.name || 'Shared image'}
+                data-image-id={image.id}
+                crossOrigin="anonymous"
+                draggable="false"
+                style={imageStyle}
+              />
               {selected && RESIZE_CORNERS.map((corner) => (
                 <button
                   key={corner}
@@ -1178,16 +1451,21 @@ function DrawPage() {
               tabIndex={0}
               aria-label={`Text field: ${textField.text || 'empty'}`}
               onPointerDown={(event) => handleTextPointerDown(event, textField)}
+              onContextMenu={(event) => handleTextContextMenu(event, textField)}
               onPointerMove={handleTextPointerMove}
               onPointerEnter={(event) => handleCursorMove(event, 'move')}
-              onPointerLeave={() => handleCursorLeave('move')}
+              onPointerLeave={() => {
+                clearObjectLongPress();
+                handleCursorLeave('move');
+              }}
               onPointerUp={finishTextInteraction}
               onPointerCancel={finishTextInteraction}
               onDoubleClick={(event) => beginTextEditing(event, textField)}
               style={{
                 ...textFieldFrameStyle,
-                zIndex: selected ? 7 : 6,
+                zIndex: textField.layer === 'background' ? 1 : selected ? 7 : 6,
                 pointerEvents: toolMode === 'select' || (isMobile && toolMode === 'pan') ? 'auto' : 'none',
+                touchAction: isMobile && toolMode === 'pan' ? 'auto' : 'none',
                 left: `${textField.x * 100}%`,
                 top: `${textField.y * 100}%`,
                 width: `${textField.width * 100}%`,
@@ -1222,16 +1500,31 @@ function DrawPage() {
             style={{
               ...imageContextMenuStyle,
               left: `${Math.max(8, Math.min(imageContextMenu.x, window.innerWidth - 208))}px`,
-              top: `${Math.max(8, Math.min(imageContextMenu.y, window.innerHeight - 92))}px`,
+              top: `${Math.max(8, Math.min(imageContextMenu.y, window.innerHeight - 140))}px`,
             }}
             onPointerDown={(event) => event.stopPropagation()}
             onContextMenu={(event) => event.preventDefault()}
           >
-            <button type="button" onClick={() => setImageLayer(imageContextMenu.id, 'background')} style={contextMenuButtonStyle}>
+            <button
+              type="button"
+              onClick={() => (imageContextMenu.type === 'text'
+                ? setTextLayer(imageContextMenu.id, 'background')
+                : setImageLayer(imageContextMenu.id, 'background'))}
+              style={contextMenuButtonStyle}
+            >
               Send to background
             </button>
-            <button type="button" onClick={() => setImageLayer(imageContextMenu.id, 'top')} style={contextMenuButtonStyle}>
+            <button
+              type="button"
+              onClick={() => (imageContextMenu.type === 'text'
+                ? setTextLayer(imageContextMenu.id, 'top')
+                : setImageLayer(imageContextMenu.id, 'top'))}
+              style={contextMenuButtonStyle}
+            >
               Bring to top
+            </button>
+            <button type="button" onClick={removeContextObject} style={contextMenuButtonStyle}>
+              Remove
             </button>
           </div>
         )}
