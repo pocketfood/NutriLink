@@ -743,7 +743,7 @@ function DrawPage() {
       style={{
         ...pageStyle,
         overflow: isMobile ? 'auto' : 'hidden',
-        touchAction: isMobile ? 'pan-x pan-y' : 'none',
+        touchAction: isMobile ? 'auto' : 'none',
       }}
       onPointerDown={() => setImageContextMenu(null)}
       onDragOver={(event) => {
