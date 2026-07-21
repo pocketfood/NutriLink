@@ -1,14 +1,14 @@
-import { upload } from '@vercel/blob/client';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 
 const ROOM_PATTERN = /^[a-z0-9_-]{4,64}$/i;
 const COLORS = ['#111827', '#e05252', '#2f7fe6', '#35a56a', '#9b59b6', '#f39c12'];
-const IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
 const RESIZE_CORNERS = ['nw', 'ne', 'sw', 'se'];
 const MOBILE_MEDIA_QUERY = '(max-width: 700px), (pointer: coarse)';
 const MOBILE_BOARD_WIDTH = 1920;
 const MOBILE_BOARD_HEIGHT = 1080;
+const LOCAL_TEXT_STORAGE_PREFIX = 'nutrilink-draw-texts';
+const MAX_LOCAL_TEXT_FIELDS = 100;
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
@@ -112,8 +112,31 @@ function toTextMap(texts) {
   }, {});
 }
 
-function safeFileName(name) {
-  return (name || 'image').replace(/[^a-z0-9._-]+/gi, '-').slice(0, 80) || 'image';
+function textStorageKey(roomId) {
+  return `${LOCAL_TEXT_STORAGE_PREFIX}:${roomId}`;
+}
+
+function readLocalTexts(roomId) {
+  if (typeof window === 'undefined' || !roomId) return {};
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(textStorageKey(roomId)) || '[]');
+    const values = Array.isArray(stored) ? stored : Object.values(stored || {});
+    return toTextMap(values.slice(0, MAX_LOCAL_TEXT_FIELDS));
+  } catch {
+    return {};
+  }
+}
+
+function writeLocalTexts(roomId, texts) {
+  if (typeof window === 'undefined' || !roomId) return;
+  try {
+    window.localStorage.setItem(
+      textStorageKey(roomId),
+      JSON.stringify(Object.values(texts || {}).slice(0, MAX_LOCAL_TEXT_FIELDS)),
+    );
+  } catch {
+    // Local storage is optional; live websocket sync still works.
+  }
 }
 
 function readImageDimensions(url) {
@@ -152,8 +175,7 @@ function DrawPage() {
   const [brushSize, setBrushSize] = useState(4);
   const [copied, setCopied] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [isDragOver, setIsDragOver] = useState(false);
-  const [uploadState, setUploadState] = useState('idle');
+  const [imageMessage, setImageMessage] = useState('');
   const [screenshotState, setScreenshotState] = useState('');
   const [isMobile, setIsMobile] = useState(isMobileViewport);
   const [toolMode, setToolMode] = useState(() => (isMobileViewport() ? 'pan' : 'draw'));
@@ -171,7 +193,6 @@ function DrawPage() {
   const [clientId] = useState(createClientId);
   const stageRef = useRef(null);
   const canvasRef = useRef(null);
-  const fileInputRef = useRef(null);
   const socketRef = useRef(null);
   const clientNameRef = useRef(clientName);
   const strokesRef = useRef([]);
@@ -197,7 +218,8 @@ function DrawPage() {
   const replaceTexts = useCallback((nextTexts) => {
     textsRef.current = nextTexts;
     setTexts(nextTexts);
-  }, []);
+    writeLocalTexts(roomId, nextTexts);
+  }, [roomId]);
 
   const redraw = useCallback(() => {
     const canvas = canvasRef.current;
@@ -458,6 +480,22 @@ function DrawPage() {
 
     let cancelled = false;
     let retryTimer;
+    const restoredLocalTextIds = new Set();
+    const applyTextSnapshot = (serverTexts) => {
+      const serverMap = toTextMap(serverTexts);
+      if (Object.keys(serverMap).length) {
+        replaceTexts(serverMap);
+        return;
+      }
+
+      const localMap = readLocalTexts(roomId);
+      replaceTexts(localMap);
+      Object.values(localMap).forEach((textField) => {
+        if (restoredLocalTextIds.has(textField.id)) return;
+        restoredLocalTextIds.add(textField.id);
+        send({ type: 'text:add', text: textField });
+      });
+    };
     const connect = () => {
       if (cancelled) return;
       if ([WebSocket.CONNECTING, WebSocket.OPEN].includes(socketRef.current?.readyState)) return;
@@ -475,7 +513,7 @@ function DrawPage() {
           if (message.type === 'snapshot') {
             strokesRef.current = Array.isArray(message.strokes) ? message.strokes : [];
             replaceImages(toImageMap(message.images));
-            replaceTexts(toTextMap(message.texts));
+            applyTextSnapshot(message.texts);
             setCursors(toCursorMap(message.cursors));
             setParticipantCount(Number(message.participants) || 0);
             redraw();
@@ -527,8 +565,6 @@ function DrawPage() {
             replaceTexts(nextTexts);
             setSelectedTextId(null);
             setEditingTextId(null);
-          } else if (message.type === 'text:snapshot') {
-            replaceTexts(toTextMap(message.texts));
           } else if (message.type === 'cursor' && message.cursor?.id) {
             setCursors((current) => {
               const next = { ...current };
@@ -895,11 +931,6 @@ function DrawPage() {
   };
 
   const addText = () => {
-    if (connectionState !== 'connected') {
-      setUploadState('Connect first');
-      window.setTimeout(() => setUploadState('idle'), 1800);
-      return;
-    }
     const textField = {
       id: createTextId(),
       text: 'Text',
@@ -954,67 +985,45 @@ function DrawPage() {
     imageInteractionRef.current = null;
   };
 
-  const uploadImageFiles = async (fileList, dropPoint = null) => {
-    if (connectionState !== 'connected') {
-      setUploadState('Connect first');
-      window.setTimeout(() => setUploadState('idle'), 1800);
-      return;
-    }
+  const addImageFromUrl = async () => {
+    const enteredUrl = window.prompt('Paste a direct image URL (https://...)');
+    if (!enteredUrl) return;
 
-    const files = Array.from(fileList || [])
-      .filter((file) => IMAGE_TYPES.has(file.type) && file.size <= 5 * 1024 * 1024)
-      .slice(0, 5);
-    if (!files.length) {
-      setUploadState('Images only, max 5 MB');
-      window.setTimeout(() => setUploadState('idle'), 2200);
-      return;
-    }
-
-    setUploadState('Uploading...');
+    let url;
     try {
-      for (const [index, file] of files.entries()) {
-        const blob = await upload(`draw/${roomId}/${safeFileName(file.name)}`, file, {
-          access: 'public',
-          contentType: file.type,
-          handleUploadUrl: '/api/draw-image-upload',
-          clientPayload: JSON.stringify({ roomId }),
-        });
-        const dimensions = await readImageDimensions(blob.url);
-        const size = getInitialImageSize(dimensions);
-        const x = clamp((dropPoint?.x ?? 0.5) - size.width / 2 + index * 0.03, 0, 1 - size.width);
-        const y = clamp((dropPoint?.y ?? 0.5) - size.height / 2 + index * 0.03, 0, 1 - size.height);
-        send({
-          type: 'image:add',
-          image: {
-            id: createImageId(),
-            url: blob.url,
-            name: file.name,
-            x,
-            y,
-            width: size.width,
-            height: size.height,
-            layer: 'top',
-          },
-        });
+      const parsedUrl = new URL(enteredUrl.trim());
+      if (!['http:', 'https:'].includes(parsedUrl.protocol) || parsedUrl.username || parsedUrl.password) {
+        throw new Error('Invalid image URL');
       }
-      setUploadState('Image added');
-    } catch (error) {
-      console.error('Draw image upload failed:', error);
-      setUploadState('Upload failed');
-    } finally {
-      window.setTimeout(() => setUploadState('idle'), 2200);
+      url = parsedUrl.toString();
+    } catch {
+      setImageMessage('Enter a valid direct image URL');
+      window.setTimeout(() => setImageMessage(''), 2400);
+      return;
     }
-  };
 
-  const handleFileInputChange = (event) => {
-    uploadImageFiles(event.target.files);
-    event.target.value = '';
-  };
-
-  const handleDrop = (event) => {
-    event.preventDefault();
-    setIsDragOver(false);
-    uploadImageFiles(event.dataTransfer.files, getPoint(event));
+    setImageMessage('Checking image...');
+    try {
+      const dimensions = await readImageDimensions(url);
+      const size = getInitialImageSize(dimensions);
+      const image = {
+        id: createImageId(),
+        url,
+        name: url,
+        x: clamp(0.5 - size.width / 2, 0, 1 - size.width),
+        y: clamp(0.5 - size.height / 2, 0, 1 - size.height),
+        width: size.width,
+        height: size.height,
+        layer: 'top',
+      };
+      replaceImages({ ...imagesRef.current, [image.id]: image });
+      send({ type: 'image:add', image });
+      setImageMessage('Image added');
+    } catch (error) {
+      console.error('Direct image URL failed:', error);
+      setImageMessage('That URL did not return an image');
+    }
+    window.setTimeout(() => setImageMessage(''), 2400);
   };
 
   const clearDrawings = () => {
@@ -1206,12 +1215,6 @@ function DrawPage() {
         touchAction: isMobile ? 'auto' : 'none',
       }}
       onPointerDown={() => setImageContextMenu(null)}
-      onDragOver={(event) => {
-        event.preventDefault();
-        setIsDragOver(true);
-      }}
-      onDragLeave={() => setIsDragOver(false)}
-      onDrop={handleDrop}
     >
       <Link to="/" style={homeLinkStyle} aria-label="Return to NutriLink home">
         <img src="/nutrilink-logo.png" alt="NutriLink" style={homeLogoStyle} />
@@ -1315,9 +1318,7 @@ function DrawPage() {
           >
             {toolMode === 'draw' ? (isMobile ? 'Pan canvas' : 'Move images') : 'Draw'}
           </button>
-          <button type="button" onClick={() => fileInputRef.current?.click()} style={toolButtonStyle}>
-            {uploadState === 'uploading' ? 'Uploading...' : 'Add image'}
-          </button>
+          <button type="button" onClick={addImageFromUrl} style={toolButtonStyle}>Add image URL</button>
           <button type="button" onClick={addText} style={toolButtonStyle}>Add text</button>
           {selectedTextId && (
             <button type="button" onClick={deleteSelectedText} style={toolButtonStyle}>Delete text</button>
@@ -1338,14 +1339,6 @@ function DrawPage() {
           </button>
         </div>
 
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/jpeg,image/png,image/webp,image/gif"
-          multiple
-          onChange={handleFileInputChange}
-          style={{ display: 'none' }}
-        />
       </aside>
 
       <div
@@ -1552,14 +1545,13 @@ function DrawPage() {
           </div>
         ))}
 
-        {isDragOver && <div style={dropOverlayStyle}>Drop image here</div>}
       </div>
 
       <div style={footerStyle}>
         {participantCount} {participantCount === 1 ? 'user' : 'users'}
         {` - ${toolMode === 'draw' ? 'draw mode' : toolMode === 'pan' ? 'pan mode' : 'move mode'}`}
         {connectionState !== 'connected' && ' - reconnecting...'}
-        {uploadState !== 'idle' && ` - ${uploadState}`}
+        {imageMessage && ` - ${imageMessage}`}
       </div>
     </div>
   );
@@ -1898,19 +1890,6 @@ const cursorLabelStyle = {
   color: '#fff',
   fontSize: '0.65rem',
   whiteSpace: 'nowrap',
-};
-
-const dropOverlayStyle = {
-  position: 'absolute',
-  inset: 0,
-  zIndex: 19,
-  display: 'grid',
-  placeItems: 'center',
-  background: 'rgba(47,98,204,0.12)',
-  color: '#2f62cc',
-  fontSize: '1.1rem',
-  fontWeight: 700,
-  pointerEvents: 'none',
 };
 
 const footerStyle = {

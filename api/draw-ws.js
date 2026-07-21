@@ -6,7 +6,6 @@ const rooms = new Map();
 const ROOM_PATTERN = /^[a-z0-9_-]{4,64}$/i;
 const IMAGE_STATE_PREFIX = 'draw-images';
 const STROKE_STATE_PREFIX = 'draw-strokes';
-const TEXT_STATE_PREFIX = 'draw-texts';
 const MAX_STROKES = 5000;
 const MAX_IMAGES = 100;
 const MAX_TEXTS = 100;
@@ -17,8 +16,6 @@ const IMAGE_ID_PATTERN = /^[a-z0-9_-]{4,64}$/i;
 const TEXT_ID_PATTERN = /^[a-z0-9_-]{4,64}$/i;
 const IMAGE_PERSISTENCE_DEBOUNCE_MS = 500;
 const STROKE_PERSISTENCE_DEBOUNCE_MS = 500;
-const TEXT_PERSISTENCE_DEBOUNCE_MS = 500;
-const TEXT_PERSISTENCE_RETRY_MS = 2_000;
 const HEARTBEAT_INTERVAL_MS = 25_000;
 
 function send(socket, payload) {
@@ -52,10 +49,6 @@ function imageStatePath(roomId) {
 
 function strokeStatePath(roomId) {
   return `${STROKE_STATE_PREFIX}/${roomId}.json`;
-}
-
-function textStatePath(roomId) {
-  return `${TEXT_STATE_PREFIX}/${roomId}.json`;
 }
 
 function normalizePoint(point) {
@@ -111,14 +104,6 @@ function getRoom(roomId) {
       imagePersistenceQueue: Promise.resolve(),
       imagePersistenceTimer: null,
       texts: new Map(),
-      textsLoaded: false,
-      textsClearedBeforeLoad: false,
-      textLoad: null,
-      textPersistenceReady: false,
-      textPersistenceDirty: false,
-      textPersistenceQueue: Promise.resolve(),
-      textPersistenceTimer: null,
-      textRefresh: null,
     };
     rooms.set(roomId, room);
   }
@@ -165,14 +150,11 @@ function normalizeCursor(message, client) {
   };
 }
 
-function isPublicBlobUrl(value) {
+function isDirectImageUrl(value) {
   if (typeof value !== 'string' || value.length > 2048) return false;
   try {
     const url = new URL(value);
-    return url.protocol === 'https:' && (
-      url.hostname === 'public.blob.vercel-storage.com' ||
-      url.hostname.endsWith('.public.blob.vercel-storage.com')
-    );
+    return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password;
   } catch {
     return false;
   }
@@ -180,7 +162,7 @@ function isPublicBlobUrl(value) {
 
 function normalizeImage(message) {
   const value = message?.image || message;
-  if (!value || !IMAGE_ID_PATTERN.test(value.id) || !isPublicBlobUrl(value.url)) return null;
+  if (!value || !IMAGE_ID_PATTERN.test(value.id) || !isDirectImageUrl(value.url)) return null;
 
   const width = clamp(Number(value.width), 0.04, 1);
   const height = clamp(Number(value.height), 0.04, 1);
@@ -255,16 +237,6 @@ async function loadStrokes(roomId) {
     .slice(-MAX_STROKES);
 }
 
-async function loadTexts(roomId) {
-  const result = await get(textStatePath(roomId), blobOptions());
-  if (!result) return [];
-  const payload = JSON.parse(await readStreamText(result.stream));
-  return (Array.isArray(payload?.texts) ? payload.texts : [])
-    .map((textField) => normalizeText(textField))
-    .filter(Boolean)
-    .slice(0, MAX_TEXTS);
-}
-
 function queueImagePersistence(roomId, room) {
   room.imagePersistenceDirty = true;
   if (!room.imagePersistenceReady || !room.imagesLoaded || room.imagePersistenceTimer) return;
@@ -319,40 +291,6 @@ function queueStrokePersistence(roomId, room) {
         console.error('Draw stroke state persistence error:', error);
       });
   }, STROKE_PERSISTENCE_DEBOUNCE_MS);
-}
-
-function queueTextPersistence(roomId, room) {
-  room.textPersistenceDirty = true;
-  if (!room.textPersistenceReady || !room.textsLoaded || room.textPersistenceTimer) return;
-
-  room.textPersistenceTimer = setTimeout(() => {
-    room.textPersistenceTimer = null;
-    room.textPersistenceDirty = false;
-    const snapshot = JSON.stringify({
-      version: 1,
-      updatedAt: new Date().toISOString(),
-      texts: Array.from(room.texts.values()),
-    });
-    room.textPersistenceQueue = room.textPersistenceQueue
-      .catch(() => {})
-      .then(() => put(textStatePath(roomId), snapshot, {
-        ...blobOptions(),
-        addRandomSuffix: false,
-        allowOverwrite: true,
-        cacheControlMaxAge: 0,
-        contentType: 'application/json',
-      }))
-      .catch((error) => {
-        room.textPersistenceDirty = true;
-        console.error('Draw text state persistence error:', error);
-        if (!room.textPersistenceTimer) {
-          room.textPersistenceTimer = setTimeout(() => {
-            room.textPersistenceTimer = null;
-            queueTextPersistence(roomId, room);
-          }, TEXT_PERSISTENCE_RETRY_MS);
-        }
-      });
-  }, TEXT_PERSISTENCE_DEBOUNCE_MS);
 }
 
 async function ensureImagesLoaded(roomId, room) {
@@ -416,60 +354,6 @@ async function ensureStrokesLoaded(roomId, room) {
   await room.strokeLoad;
 }
 
-async function ensureTextsLoaded(roomId, room) {
-  if (room.textsLoaded) return;
-  if (!getBlobToken()) {
-    room.textsLoaded = true;
-    room.textPersistenceReady = false;
-    return;
-  }
-  if (!room.textLoad) {
-    room.textLoad = loadTexts(roomId)
-      .then((loadedTexts) => {
-        if (!room.textsClearedBeforeLoad) {
-          loadedTexts.forEach((textField) => {
-            if (!room.texts.has(textField.id)) room.texts.set(textField.id, textField);
-          });
-        }
-        room.textsLoaded = true;
-        room.textPersistenceReady = true;
-        if (room.textPersistenceDirty) queueTextPersistence(roomId, room);
-        broadcast(room, { type: 'text:snapshot', texts: Array.from(room.texts.values()) });
-      })
-      .catch((error) => {
-        room.textsLoaded = true;
-        room.textPersistenceReady = false;
-        console.error('Draw text state load error:', error);
-      });
-  }
-  await room.textLoad;
-}
-
-async function refreshTextsFromBlob(roomId, room) {
-  if (!getBlobToken() || !room.textsLoaded || room.textPersistenceDirty || room.textRefresh) return room.textRefresh;
-
-  room.textRefresh = loadTexts(roomId)
-    .then((loadedTexts) => {
-      if (room.textsClearedBeforeLoad) return;
-      let changed = false;
-      loadedTexts.forEach((textField) => {
-        if (!room.texts.has(textField.id)) {
-          room.texts.set(textField.id, textField);
-          changed = true;
-        }
-      });
-      if (changed) broadcast(room, { type: 'text:snapshot', texts: Array.from(room.texts.values()) });
-    })
-    .catch((error) => {
-      console.error('Draw text state refresh error:', error);
-    })
-    .finally(() => {
-      room.textRefresh = null;
-    });
-
-  return room.textRefresh;
-}
-
 function broadcastPresence(room) {
   broadcast(room, { type: 'presence', count: room.clients.size });
 }
@@ -489,9 +373,7 @@ async function refreshClientSnapshot(roomId, room, socket) {
   await Promise.all([
     ensureImagesLoaded(roomId, room),
     ensureStrokesLoaded(roomId, room),
-    ensureTextsLoaded(roomId, room),
   ]);
-  await refreshTextsFromBlob(roomId, room);
   send(socket, getSnapshot(room));
 }
 
@@ -607,7 +489,6 @@ socketServer.on('connection', (socket, request) => {
       const textField = normalizeText(message);
       if (!textField || room.texts.has(textField.id)) return;
       room.texts.set(textField.id, textField);
-      queueTextPersistence(roomId, room);
       broadcast(room, { type: 'text:add', text: textField });
       return;
     }
@@ -618,14 +499,12 @@ socketServer.on('connection', (socket, request) => {
       const textField = normalizeText({ textField: { ...existing, ...message } });
       if (!textField || textField.id !== existing.id) return;
       room.texts.set(textField.id, textField);
-      queueTextPersistence(roomId, room);
       broadcast(room, { type: 'text:update', text: textField });
       return;
     }
 
     if (message.type === 'text:delete') {
       if (!room.texts.delete(message.id)) return;
-      queueTextPersistence(roomId, room);
       broadcast(room, { type: 'text:delete', id: message.id });
       return;
     }
@@ -658,8 +537,6 @@ socketServer.on('connection', (socket, request) => {
 
     if (message.type === 'clear:texts') {
       room.texts.clear();
-      room.textsClearedBeforeLoad = true;
-      queueTextPersistence(roomId, room);
       broadcast(room, { type: 'clear:texts' });
       return;
     }
@@ -669,6 +546,7 @@ socketServer.on('connection', (socket, request) => {
       room.strokesClearedBeforeLoad = true;
       room.images.clear();
       room.imagesClearedBeforeLoad = true;
+      room.texts.clear();
       queueStrokePersistence(roomId, room);
       queueImagePersistence(roomId, room);
       broadcast(room, { type: 'clear' });
