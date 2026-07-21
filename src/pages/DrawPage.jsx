@@ -1417,7 +1417,6 @@ function DrawPage() {
                 src={image.url}
                 alt={image.name || 'Shared image'}
                 data-image-id={image.id}
-                crossOrigin="anonymous"
                 draggable="false"
                 style={imageStyle}
               />
