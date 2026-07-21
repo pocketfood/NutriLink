@@ -199,7 +199,7 @@ function normalizeImage(message) {
 }
 
 function normalizeText(message) {
-  const value = message?.textField || message;
+  const value = message?.textField || message?.text || message;
   if (!value || !TEXT_ID_PATTERN.test(value.id)) return null;
 
   const widthValue = Number(value.width);

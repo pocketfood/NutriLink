@@ -747,7 +747,19 @@ function DrawPage() {
   };
 
   const handleTextInput = (event, id) => {
-    updateLocalText(id, { text: event.target.value });
+    const current = textsRef.current[id];
+    if (!current) return;
+    const input = event.currentTarget;
+    input.style.height = 'auto';
+    const stageRect = canvasRef.current?.getBoundingClientRect();
+    const measuredHeight = stageRect?.height
+      ? input.scrollHeight / stageRect.height
+      : current.height;
+    input.style.height = '100%';
+    updateLocalText(id, {
+      text: event.target.value,
+      height: clamp(measuredHeight, 0.04, 1 - current.y),
+    });
   };
 
   const addText = () => {
@@ -1519,7 +1531,7 @@ const textFieldContentStyle = {
   height: '100%',
   boxSizing: 'border-box',
   whiteSpace: 'pre-wrap',
-  overflow: 'hidden',
+  overflow: 'visible',
   overflowWrap: 'anywhere',
   pointerEvents: 'none',
 };
@@ -1537,6 +1549,7 @@ const textFieldInputStyle = {
   color: 'inherit',
   font: 'inherit',
   lineHeight: 1.2,
+  overflow: 'hidden',
 };
 
 const imageStyle = {
