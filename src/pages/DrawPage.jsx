@@ -22,6 +22,10 @@ function createImageId() {
   return `image-${Math.random().toString(36).slice(2, 12)}`;
 }
 
+function createTextId() {
+  return `text-${Math.random().toString(36).slice(2, 12)}`;
+}
+
 function getStoredName() {
   if (typeof window === 'undefined') return 'Guest';
   try {
@@ -69,6 +73,13 @@ function toCursorMap(cursors) {
 function toImageMap(images) {
   return (Array.isArray(images) ? images : []).reduce((map, image) => {
     if (image?.id && image.url) map[image.id] = image;
+    return map;
+  }, {});
+}
+
+function toTextMap(texts) {
+  return (Array.isArray(texts) ? texts : []).reduce((map, textField) => {
+    if (textField?.id) map[textField.id] = textField;
     return map;
   }, {});
 }
@@ -123,7 +134,10 @@ function DrawPage() {
   const [nameMessage, setNameMessage] = useState('');
   const [cursors, setCursors] = useState({});
   const [images, setImages] = useState({});
+  const [texts, setTexts] = useState({});
   const [selectedImageId, setSelectedImageId] = useState(null);
+  const [selectedTextId, setSelectedTextId] = useState(null);
+  const [editingTextId, setEditingTextId] = useState(null);
   const [imageContextMenu, setImageContextMenu] = useState(null);
   const [clientId] = useState(createClientId);
   const stageRef = useRef(null);
@@ -133,17 +147,26 @@ function DrawPage() {
   const clientNameRef = useRef(clientName);
   const strokesRef = useRef([]);
   const imagesRef = useRef({});
+  const textsRef = useRef({});
   const activeStrokeRef = useRef(null);
   const drawingRef = useRef(false);
   const imageInteractionRef = useRef(null);
+  const textInteractionRef = useRef(null);
   const cursorFrameRef = useRef(null);
   const pendingCursorRef = useRef(null);
   const imageFrameRef = useRef(null);
   const pendingImageUpdateRef = useRef(null);
+  const textFrameRef = useRef(null);
+  const pendingTextUpdateRef = useRef(null);
 
   const replaceImages = useCallback((nextImages) => {
     imagesRef.current = nextImages;
     setImages(nextImages);
+  }, []);
+
+  const replaceTexts = useCallback((nextTexts) => {
+    textsRef.current = nextTexts;
+    setTexts(nextTexts);
   }, []);
 
   const redraw = useCallback(() => {
@@ -261,6 +284,47 @@ function DrawPage() {
     });
   };
 
+  const sendTextUpdate = (textField) => {
+    pendingTextUpdateRef.current = {
+      type: 'text:update',
+      id: textField.id,
+      text: textField.text,
+      x: textField.x,
+      y: textField.y,
+      width: textField.width,
+      height: textField.height,
+      fontSize: textField.fontSize,
+      color: textField.color,
+    };
+    if (textFrameRef.current !== null) return;
+    textFrameRef.current = window.requestAnimationFrame(() => {
+      textFrameRef.current = null;
+      const message = pendingTextUpdateRef.current;
+      pendingTextUpdateRef.current = null;
+      if (message) send(message);
+    });
+  };
+
+  const sendTextUpdateNow = (textField) => {
+    if (!textField) return;
+    if (textFrameRef.current !== null) {
+      window.cancelAnimationFrame(textFrameRef.current);
+      textFrameRef.current = null;
+    }
+    pendingTextUpdateRef.current = null;
+    send({
+      type: 'text:update',
+      id: textField.id,
+      text: textField.text,
+      x: textField.x,
+      y: textField.y,
+      width: textField.width,
+      height: textField.height,
+      fontSize: textField.fontSize,
+      color: textField.color,
+    });
+  };
+
   const getPoint = (event) => {
     const canvas = canvasRef.current;
     if (!canvas) return null;
@@ -337,6 +401,7 @@ function DrawPage() {
           if (message.type === 'snapshot') {
             strokesRef.current = Array.isArray(message.strokes) ? message.strokes : [];
             replaceImages(toImageMap(message.images));
+            replaceTexts(toTextMap(message.texts));
             setCursors(toCursorMap(message.cursors));
             setParticipantCount(Number(message.participants) || 0);
             redraw();
@@ -349,7 +414,10 @@ function DrawPage() {
           } else if (message.type === 'clear') {
             strokesRef.current = [];
             replaceImages({});
+            replaceTexts({});
             setSelectedImageId(null);
+            setSelectedTextId(null);
+            setEditingTextId(null);
             setImageContextMenu(null);
             redraw();
           } else if (message.type === 'clear:drawings') {
@@ -359,12 +427,28 @@ function DrawPage() {
             replaceImages({});
             setSelectedImageId(null);
             setImageContextMenu(null);
+          } else if (message.type === 'clear:texts') {
+            replaceTexts({});
+            setSelectedTextId(null);
+            setEditingTextId(null);
           } else if (message.type === 'image:add' && message.image?.id) {
             replaceImages({ ...imagesRef.current, [message.image.id]: message.image });
           } else if (message.type === 'image:update' && message.image?.id) {
             replaceImages({ ...imagesRef.current, [message.image.id]: message.image });
           } else if (message.type === 'image:snapshot') {
             replaceImages(toImageMap(message.images));
+          } else if (message.type === 'text:add' && message.text?.id) {
+            replaceTexts({ ...textsRef.current, [message.text.id]: message.text });
+          } else if (message.type === 'text:update' && message.text?.id) {
+            replaceTexts({ ...textsRef.current, [message.text.id]: message.text });
+          } else if (message.type === 'text:delete' && message.id) {
+            const nextTexts = { ...textsRef.current };
+            delete nextTexts[message.id];
+            replaceTexts(nextTexts);
+            setSelectedTextId(null);
+            setEditingTextId(null);
+          } else if (message.type === 'text:snapshot') {
+            replaceTexts(toTextMap(message.texts));
           } else if (message.type === 'cursor' && message.cursor?.id) {
             setCursors((current) => {
               const next = { ...current };
@@ -426,7 +510,7 @@ function DrawPage() {
       socketRef.current?.close();
       socketRef.current = null;
     };
-  }, [clientId, redraw, replaceImages, resizeCanvas, roomId, roomState, send]);
+  }, [clientId, redraw, replaceImages, replaceTexts, resizeCanvas, roomId, roomState, send]);
 
   useEffect(() => {
     resizeCanvas();
@@ -436,7 +520,7 @@ function DrawPage() {
     if (observer && canvasRef.current) observer.observe(canvasRef.current);
     if (observer && stageRef.current) observer.observe(stageRef.current);
     const frame = window.requestAnimationFrame(resizeCanvas);
-    return () => {
+      return () => {
       window.removeEventListener('resize', resizeCanvas);
       window.visualViewport?.removeEventListener('resize', resizeCanvas);
       window.cancelAnimationFrame(frame);
@@ -451,6 +535,7 @@ function DrawPage() {
       document.removeEventListener('fullscreenchange', updateFullscreenState);
       if (cursorFrameRef.current !== null) window.cancelAnimationFrame(cursorFrameRef.current);
       if (imageFrameRef.current !== null) window.cancelAnimationFrame(imageFrameRef.current);
+      if (textFrameRef.current !== null) window.cancelAnimationFrame(textFrameRef.current);
     };
   }, []);
 
@@ -462,9 +547,19 @@ function DrawPage() {
     sendImageUpdate(nextImage);
   };
 
+  const updateLocalText = (id, changes) => {
+    const current = textsRef.current[id];
+    if (!current) return;
+    const nextText = { ...current, ...changes };
+    replaceTexts({ ...textsRef.current, [id]: nextText });
+    sendTextUpdate(nextText);
+  };
+
   const handlePointerDown = (event) => {
     if (event.button !== 0) return;
     setImageContextMenu(null);
+    setSelectedTextId(null);
+    setEditingTextId(null);
     resizeCanvas();
     if (toolMode !== 'draw') {
       setToolMode('draw');
@@ -533,6 +628,8 @@ function DrawPage() {
     sendCursor(point, true, 'move');
     setToolMode('select');
     setSelectedImageId(image.id);
+    setSelectedTextId(null);
+    setEditingTextId(null);
     imageInteractionRef.current = {
       id: image.id,
       mode,
@@ -593,6 +690,99 @@ function DrawPage() {
       width: right - left,
       height: bottom - top,
     });
+  };
+
+  const handleTextPointerDown = (event, textField) => {
+    if (connectionState !== 'connected' || event.button !== 0) return;
+    if (event.target.closest?.('textarea')) return;
+    event.stopPropagation();
+    setImageContextMenu(null);
+    setToolMode('select');
+    setSelectedImageId(null);
+    setSelectedTextId(textField.id);
+    setEditingTextId(null);
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    const point = getPoint(event);
+    if (!point) return;
+    sendCursor(point, true, 'move');
+    textInteractionRef.current = {
+      id: textField.id,
+      startPoint: point,
+      initial: { ...textField },
+      captureTarget: event.currentTarget,
+    };
+  };
+
+  const handleTextPointerMove = (event) => {
+    const point = getPoint(event);
+    if (!point) return;
+    sendCursor(point, true, 'move');
+    const interaction = textInteractionRef.current;
+    if (!interaction) return;
+    event.preventDefault();
+    const deltaX = point.x - interaction.startPoint.x;
+    const deltaY = point.y - interaction.startPoint.y;
+    const initial = interaction.initial;
+    updateLocalText(interaction.id, {
+      x: clamp(initial.x + deltaX, 0, 1 - initial.width),
+      y: clamp(initial.y + deltaY, 0, 1 - initial.height),
+    });
+  };
+
+  const finishTextInteraction = (event) => {
+    const interaction = textInteractionRef.current;
+    if (!interaction) return;
+    sendTextUpdateNow(textsRef.current[interaction.id]);
+    interaction.captureTarget?.releasePointerCapture?.(event.pointerId);
+    textInteractionRef.current = null;
+  };
+
+  const beginTextEditing = (event, textField) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setToolMode('select');
+    setSelectedImageId(null);
+    setSelectedTextId(textField.id);
+    setEditingTextId(textField.id);
+  };
+
+  const handleTextInput = (event, id) => {
+    updateLocalText(id, { text: event.target.value });
+  };
+
+  const addText = () => {
+    if (connectionState !== 'connected') {
+      setUploadState('Connect first');
+      window.setTimeout(() => setUploadState('idle'), 1800);
+      return;
+    }
+    const textField = {
+      id: createTextId(),
+      text: 'Text',
+      x: 0.38,
+      y: 0.42,
+      width: 0.24,
+      height: 0.1,
+      fontSize: 32,
+      color: color,
+    };
+    replaceTexts({ ...textsRef.current, [textField.id]: textField });
+    setSelectedImageId(null);
+    setSelectedTextId(textField.id);
+    setEditingTextId(textField.id);
+    setToolMode('select');
+    setImageContextMenu(null);
+    send({ type: 'text:add', text: textField });
+  };
+
+  const deleteSelectedText = () => {
+    if (!selectedTextId) return;
+    const nextTexts = { ...textsRef.current };
+    delete nextTexts[selectedTextId];
+    replaceTexts(nextTexts);
+    send({ type: 'text:delete', id: selectedTextId });
+    setSelectedTextId(null);
+    setEditingTextId(null);
   };
 
   const saveName = () => {
@@ -718,7 +908,11 @@ function DrawPage() {
     const nextMode = toolMode === 'draw' ? (isMobile ? 'pan' : 'select') : 'draw';
     setToolMode(nextMode);
     setImageContextMenu(null);
-    if (nextMode === 'draw') setSelectedImageId(null);
+    if (nextMode === 'draw') {
+      setSelectedImageId(null);
+      setSelectedTextId(null);
+      setEditingTextId(null);
+    }
   };
 
   if (roomState !== 'ready') {
@@ -858,6 +1052,10 @@ function DrawPage() {
           <button type="button" onClick={() => fileInputRef.current?.click()} style={toolButtonStyle}>
             {uploadState === 'uploading' ? 'Uploading...' : 'Add image'}
           </button>
+          <button type="button" onClick={addText} style={toolButtonStyle}>Add text</button>
+          {selectedTextId && (
+            <button type="button" onClick={deleteSelectedText} style={toolButtonStyle}>Delete text</button>
+          )}
           <button type="button" onClick={clearDrawings} style={toolButtonStyle}>Clear all drawings</button>
           <button type="button" onClick={clearImages} style={toolButtonStyle}>Clear all images</button>
           <button type="button" onClick={shareRoom} style={toolButtonStyle}>{copied ? 'Copied' : 'Share'}</button>
@@ -954,6 +1152,55 @@ function DrawPage() {
                   style={{ ...resizeHandleStyle, ...resizeHandlePositions[corner] }}
                 />
               ))}
+            </div>
+          );
+        })}
+
+        {Object.values(texts).map((textField) => {
+          const selected = textField.id === selectedTextId;
+          const editing = textField.id === editingTextId;
+          return (
+            <div
+              key={textField.id}
+              role="textbox"
+              tabIndex={0}
+              aria-label={`Text field: ${textField.text || 'empty'}`}
+              onPointerDown={(event) => handleTextPointerDown(event, textField)}
+              onPointerMove={handleTextPointerMove}
+              onPointerEnter={(event) => handleCursorMove(event, 'move')}
+              onPointerLeave={() => handleCursorLeave('move')}
+              onPointerUp={finishTextInteraction}
+              onPointerCancel={finishTextInteraction}
+              onDoubleClick={(event) => beginTextEditing(event, textField)}
+              style={{
+                ...textFieldFrameStyle,
+                zIndex: selected ? 7 : 6,
+                pointerEvents: toolMode === 'select' || (isMobile && toolMode === 'pan') ? 'auto' : 'none',
+                left: `${textField.x * 100}%`,
+                top: `${textField.y * 100}%`,
+                width: `${textField.width * 100}%`,
+                height: `${textField.height * 100}%`,
+                color: textField.color,
+                fontSize: `${textField.fontSize}px`,
+                outline: selected ? '2px solid #2f62cc' : 'none',
+              }}
+            >
+              {editing ? (
+                <textarea
+                  value={textField.text}
+                  autoFocus
+                  aria-label="Edit text"
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onChange={(event) => handleTextInput(event, textField.id)}
+                  onBlur={() => {
+                    sendTextUpdateNow(textsRef.current[textField.id]);
+                    setEditingTextId(null);
+                  }}
+                  style={textFieldInputStyle}
+                />
+              ) : (
+                <div style={textFieldContentStyle}>{textField.text || 'Double-click to edit'}</div>
+              )}
             </div>
           );
         })}
@@ -1255,6 +1502,41 @@ const imageFrameStyle = {
   userSelect: 'none',
   touchAction: 'none',
   overflow: 'visible',
+};
+
+const textFieldFrameStyle = {
+  position: 'absolute',
+  boxSizing: 'border-box',
+  padding: '0.25rem',
+  userSelect: 'none',
+  touchAction: 'none',
+  overflow: 'visible',
+  cursor: 'move',
+};
+
+const textFieldContentStyle = {
+  width: '100%',
+  height: '100%',
+  boxSizing: 'border-box',
+  whiteSpace: 'pre-wrap',
+  overflow: 'hidden',
+  overflowWrap: 'anywhere',
+  pointerEvents: 'none',
+};
+
+const textFieldInputStyle = {
+  display: 'block',
+  width: '100%',
+  height: '100%',
+  boxSizing: 'border-box',
+  padding: 0,
+  border: '0',
+  outline: 'none',
+  resize: 'none',
+  background: 'rgba(255,255,255,0.75)',
+  color: 'inherit',
+  font: 'inherit',
+  lineHeight: 1.2,
 };
 
 const imageStyle = {

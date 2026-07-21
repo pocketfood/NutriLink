@@ -6,13 +6,18 @@ const rooms = new Map();
 const ROOM_PATTERN = /^[a-z0-9_-]{4,64}$/i;
 const IMAGE_STATE_PREFIX = 'draw-images';
 const STROKE_STATE_PREFIX = 'draw-strokes';
+const TEXT_STATE_PREFIX = 'draw-texts';
 const MAX_STROKES = 5000;
 const MAX_IMAGES = 100;
+const MAX_TEXTS = 100;
+const MAX_TEXT_LENGTH = 4000;
 const MAX_POINTS_PER_STROKE = 600;
 const MAX_MESSAGE_BYTES = 256 * 1024;
 const IMAGE_ID_PATTERN = /^[a-z0-9_-]{4,64}$/i;
+const TEXT_ID_PATTERN = /^[a-z0-9_-]{4,64}$/i;
 const IMAGE_PERSISTENCE_DEBOUNCE_MS = 500;
 const STROKE_PERSISTENCE_DEBOUNCE_MS = 500;
+const TEXT_PERSISTENCE_DEBOUNCE_MS = 500;
 const HEARTBEAT_INTERVAL_MS = 25_000;
 
 function send(socket, payload) {
@@ -46,6 +51,10 @@ function imageStatePath(roomId) {
 
 function strokeStatePath(roomId) {
   return `${STROKE_STATE_PREFIX}/${roomId}.json`;
+}
+
+function textStatePath(roomId) {
+  return `${TEXT_STATE_PREFIX}/${roomId}.json`;
 }
 
 function normalizePoint(point) {
@@ -100,6 +109,14 @@ function getRoom(roomId) {
       imagePersistenceDirty: false,
       imagePersistenceQueue: Promise.resolve(),
       imagePersistenceTimer: null,
+      texts: new Map(),
+      textsLoaded: false,
+      textsClearedBeforeLoad: false,
+      textLoad: null,
+      textPersistenceReady: false,
+      textPersistenceDirty: false,
+      textPersistenceQueue: Promise.resolve(),
+      textPersistenceTimer: null,
     };
     rooms.set(roomId, room);
   }
@@ -181,6 +198,39 @@ function normalizeImage(message) {
   };
 }
 
+function normalizeText(message) {
+  const value = message?.textField || message;
+  if (!value || !TEXT_ID_PATTERN.test(value.id)) return null;
+
+  const widthValue = Number(value.width);
+  const heightValue = Number(value.height);
+  const fontSizeValue = Number(value.fontSize);
+  const width = clamp(Number.isFinite(widthValue) ? widthValue : 0.24, 0.08, 1);
+  const height = clamp(Number.isFinite(heightValue) ? heightValue : 0.1, 0.04, 1);
+  const x = clamp(Number(value.x) || 0, 0, 1 - width);
+  const y = clamp(Number(value.y) || 0, 0, 1 - height);
+  if (![x, y, width, height].every(Number.isFinite)) return null;
+
+  const text = typeof value.text === 'string'
+    ? value.text.slice(0, MAX_TEXT_LENGTH)
+    : 'Text';
+  const fontSize = clamp(Number.isFinite(fontSizeValue) ? fontSizeValue : 32, 8, 120);
+  const color = typeof value.color === 'string' && /^#[0-9a-f]{6}$/i.test(value.color)
+    ? value.color
+    : '#111827';
+
+  return {
+    id: value.id,
+    text,
+    x,
+    y,
+    width,
+    height,
+    fontSize,
+    color,
+  };
+}
+
 async function loadImages(roomId) {
   const result = await get(imageStatePath(roomId), blobOptions());
   if (!result) return [];
@@ -200,6 +250,16 @@ async function loadStrokes(roomId) {
     .map((stroke) => normalizeStroke(stroke))
     .filter(Boolean)
     .slice(-MAX_STROKES);
+}
+
+async function loadTexts(roomId) {
+  const result = await get(textStatePath(roomId), blobOptions());
+  if (!result) return [];
+  const payload = JSON.parse(await readStreamText(result.stream));
+  return (Array.isArray(payload?.texts) ? payload.texts : [])
+    .map((textField) => normalizeText(textField))
+    .filter(Boolean)
+    .slice(0, MAX_TEXTS);
 }
 
 function queueImagePersistence(roomId, room) {
@@ -256,6 +316,34 @@ function queueStrokePersistence(roomId, room) {
         console.error('Draw stroke state persistence error:', error);
       });
   }, STROKE_PERSISTENCE_DEBOUNCE_MS);
+}
+
+function queueTextPersistence(roomId, room) {
+  room.textPersistenceDirty = true;
+  if (!room.textPersistenceReady || !room.textsLoaded || room.textPersistenceTimer) return;
+
+  room.textPersistenceTimer = setTimeout(() => {
+    room.textPersistenceTimer = null;
+    room.textPersistenceDirty = false;
+    const snapshot = JSON.stringify({
+      version: 1,
+      updatedAt: new Date().toISOString(),
+      texts: Array.from(room.texts.values()),
+    });
+    room.textPersistenceQueue = room.textPersistenceQueue
+      .catch(() => {})
+      .then(() => put(textStatePath(roomId), snapshot, {
+        ...blobOptions(),
+        addRandomSuffix: false,
+        allowOverwrite: true,
+        cacheControlMaxAge: 60,
+        contentType: 'application/json',
+      }))
+      .catch((error) => {
+        room.textPersistenceDirty = true;
+        console.error('Draw text state persistence error:', error);
+      });
+  }, TEXT_PERSISTENCE_DEBOUNCE_MS);
 }
 
 async function ensureImagesLoaded(roomId, room) {
@@ -319,6 +407,35 @@ async function ensureStrokesLoaded(roomId, room) {
   await room.strokeLoad;
 }
 
+async function ensureTextsLoaded(roomId, room) {
+  if (room.textsLoaded) return;
+  if (!getBlobToken()) {
+    room.textsLoaded = true;
+    room.textPersistenceReady = false;
+    return;
+  }
+  if (!room.textLoad) {
+    room.textLoad = loadTexts(roomId)
+      .then((loadedTexts) => {
+        if (!room.textsClearedBeforeLoad) {
+          loadedTexts.forEach((textField) => {
+            if (!room.texts.has(textField.id)) room.texts.set(textField.id, textField);
+          });
+        }
+        room.textsLoaded = true;
+        room.textPersistenceReady = true;
+        if (room.textPersistenceDirty) queueTextPersistence(roomId, room);
+        broadcast(room, { type: 'text:snapshot', texts: Array.from(room.texts.values()) });
+      })
+      .catch((error) => {
+        room.textsLoaded = true;
+        room.textPersistenceReady = false;
+        console.error('Draw text state load error:', error);
+      });
+  }
+  await room.textLoad;
+}
+
 function broadcastPresence(room) {
   broadcast(room, { type: 'presence', count: room.clients.size });
 }
@@ -328,13 +445,18 @@ function getSnapshot(room) {
     type: 'snapshot',
     strokes: room.strokes,
     images: Array.from(room.images.values()),
+    texts: Array.from(room.texts.values()),
     cursors: Array.from(room.clients.values(), ({ cursor }) => cursor).filter(Boolean),
     participants: room.clients.size,
   };
 }
 
 async function refreshClientSnapshot(roomId, room, socket) {
-  await Promise.all([ensureImagesLoaded(roomId, room), ensureStrokesLoaded(roomId, room)]);
+  await Promise.all([
+    ensureImagesLoaded(roomId, room),
+    ensureStrokesLoaded(roomId, room),
+    ensureTextsLoaded(roomId, room),
+  ]);
   send(socket, getSnapshot(room));
 }
 
@@ -378,6 +500,7 @@ socketServer.on('connection', (socket, request) => {
   broadcastPresence(room);
   void ensureImagesLoaded(roomId, room);
   void ensureStrokesLoaded(roomId, room);
+  void ensureTextsLoaded(roomId, room);
 
   socket.on('message', (raw) => {
     if (Buffer.byteLength(raw) > MAX_MESSAGE_BYTES) return;
@@ -440,6 +563,34 @@ socketServer.on('connection', (socket, request) => {
       return;
     }
 
+    if (message.type === 'text:add') {
+      if (room.texts.size >= MAX_TEXTS) return;
+      const textField = normalizeText(message);
+      if (!textField || room.texts.has(textField.id)) return;
+      room.texts.set(textField.id, textField);
+      queueTextPersistence(roomId, room);
+      broadcast(room, { type: 'text:add', text: textField });
+      return;
+    }
+
+    if (message.type === 'text:update') {
+      const existing = room.texts.get(message.id);
+      if (!existing) return;
+      const textField = normalizeText({ textField: { ...existing, ...message } });
+      if (!textField || textField.id !== existing.id) return;
+      room.texts.set(textField.id, textField);
+      queueTextPersistence(roomId, room);
+      broadcast(room, { type: 'text:update', text: textField });
+      return;
+    }
+
+    if (message.type === 'text:delete') {
+      if (!room.texts.delete(message.id)) return;
+      queueTextPersistence(roomId, room);
+      broadcast(room, { type: 'text:delete', id: message.id });
+      return;
+    }
+
     if (message.type === 'stroke') {
       const stroke = normalizeStroke(message);
       if (!stroke) return;
@@ -463,6 +614,14 @@ socketServer.on('connection', (socket, request) => {
       room.imagesClearedBeforeLoad = true;
       queueImagePersistence(roomId, room);
       broadcast(room, { type: 'clear:images' });
+      return;
+    }
+
+    if (message.type === 'clear:texts') {
+      room.texts.clear();
+      room.textsClearedBeforeLoad = true;
+      queueTextPersistence(roomId, room);
+      broadcast(room, { type: 'clear:texts' });
       return;
     }
 
