@@ -8,6 +8,9 @@ import { getRemoteViewerUrl } from '../utils/remoteViewer';
 const BLOB_BASE_URL = 'https://ogoyhmlvdwypuizr.public.blob.vercel-storage.com/videos';
 const NUTRILINK_HOSTS = new Set(['nutrilink-xi.vercel.app', 'www.nutrilink-xi.vercel.app']);
 const NUTRILINK_ID_PATTERN = /^[a-z0-9_-]{2,128}$/i;
+// Temporarily disable generated poster uploads while preserving posters supplied
+// by source providers (for example, Twitter) or already stored in a NutriLink.
+const ENABLE_AUTOMATIC_POSTERS = false;
 
 function getCurrentOrigin() {
   return typeof window !== 'undefined' ? window.location.origin : 'https://nutrilink-xi.vercel.app';
@@ -122,7 +125,7 @@ function HomePage() {
       }
 
       if (!isXPostUrl(inputUrl)) {
-        const posterData = await createVideoPoster(inputUrl);
+        const posterData = ENABLE_AUTOMATIC_POSTERS ? await createVideoPoster(inputUrl) : null;
         return {
           url: inputUrl,
           filename,
@@ -184,7 +187,9 @@ function HomePage() {
       if (!items.length) throw new Error('That NutriLink does not contain any playable videos');
 
       return Promise.all(items.map(async (item) => {
-        if (item.poster || item.type === 'audio' || item.type === 'remote-viewer') return item;
+        if (item.poster || item.type === 'audio' || item.type === 'remote-viewer' || !ENABLE_AUTOMATIC_POSTERS) {
+          return item;
+        }
         const posterData = await createVideoPoster(item.url);
         return posterData ? { ...item, posterData } : item;
       }));
