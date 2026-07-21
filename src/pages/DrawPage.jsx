@@ -6,6 +6,9 @@ const ROOM_PATTERN = /^[a-z0-9_-]{4,64}$/i;
 const COLORS = ['#111827', '#e05252', '#2f7fe6', '#35a56a', '#9b59b6', '#f39c12'];
 const IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
 const RESIZE_CORNERS = ['nw', 'ne', 'sw', 'se'];
+const MOBILE_MEDIA_QUERY = '(max-width: 700px), (pointer: coarse)';
+const MOBILE_BOARD_WIDTH = 1920;
+const MOBILE_BOARD_HEIGHT = 1080;
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
@@ -48,6 +51,12 @@ function getSocketUrl(roomId) {
 function getCursorColor(id) {
   const index = Array.from(id || '').reduce((sum, character) => sum + character.charCodeAt(0), 0);
   return COLORS[index % COLORS.length];
+}
+
+function isMobileViewport() {
+  return typeof window !== 'undefined'
+    && typeof window.matchMedia === 'function'
+    && window.matchMedia(MOBILE_MEDIA_QUERY).matches;
 }
 
 function toCursorMap(cursors) {
@@ -106,7 +115,8 @@ function DrawPage() {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
   const [uploadState, setUploadState] = useState('idle');
-  const [toolMode, setToolMode] = useState('draw');
+  const [isMobile, setIsMobile] = useState(isMobileViewport);
+  const [toolMode, setToolMode] = useState(() => (isMobileViewport() ? 'pan' : 'draw'));
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [clientName, setClientName] = useState(getStoredName);
   const [nameDraft, setNameDraft] = useState(clientName);
@@ -182,6 +192,26 @@ function DrawPage() {
   useEffect(() => {
     clientNameRef.current = clientName;
   }, [clientName]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return undefined;
+    const mediaQuery = window.matchMedia(MOBILE_MEDIA_QUERY);
+    const updateViewportMode = () => {
+      setIsMobile(mediaQuery.matches);
+      setToolMode((currentMode) => {
+        if (mediaQuery.matches && currentMode === 'select') return 'pan';
+        if (!mediaQuery.matches && currentMode === 'pan') return 'draw';
+        return currentMode;
+      });
+    };
+    updateViewportMode();
+    mediaQuery.addEventListener?.('change', updateViewportMode);
+    if (!mediaQuery.addEventListener) mediaQuery.addListener?.(updateViewportMode);
+    return () => {
+      mediaQuery.removeEventListener?.('change', updateViewportMode);
+      if (!mediaQuery.removeEventListener) mediaQuery.removeListener?.(updateViewportMode);
+    };
+  }, []);
 
   const sendCursor = (point, active = true, mode = 'draw') => {
     pendingCursorRef.current = { type: 'cursor', point, active, mode };
@@ -412,7 +442,7 @@ function DrawPage() {
       window.cancelAnimationFrame(frame);
       observer?.disconnect();
     };
-  }, [resizeCanvas]);
+  }, [isMobile, resizeCanvas]);
 
   useEffect(() => {
     const updateFullscreenState = () => setIsFullscreen(Boolean(document.fullscreenElement));
@@ -684,6 +714,13 @@ function DrawPage() {
     }
   };
 
+  const toggleDrawMode = () => {
+    const nextMode = toolMode === 'draw' ? (isMobile ? 'pan' : 'select') : 'draw';
+    setToolMode(nextMode);
+    setImageContextMenu(null);
+    if (nextMode === 'draw') setSelectedImageId(null);
+  };
+
   if (roomState !== 'ready') {
     const roomMissing = roomState === 'missing';
     return (
@@ -703,7 +740,11 @@ function DrawPage() {
 
   return (
     <div
-      style={pageStyle}
+      style={{
+        ...pageStyle,
+        overflow: isMobile ? 'auto' : 'hidden',
+        touchAction: isMobile ? 'pan-x pan-y' : 'none',
+      }}
       onPointerDown={() => setImageContextMenu(null)}
       onDragOver={(event) => {
         event.preventDefault();
@@ -725,6 +766,12 @@ function DrawPage() {
       >
         {isSettingsOpen ? 'Close' : 'Settings'}
       </button>
+
+      {isMobile && (
+        <button type="button" onClick={toggleDrawMode} style={mobileDrawToggleStyle}>
+          {toolMode === 'draw' ? 'Pan canvas' : 'Draw'}
+        </button>
+      )}
 
       <aside
         id="draw-settings"
@@ -803,14 +850,10 @@ function DrawPage() {
         <div style={settingsActionsStyle}>
           <button
             type="button"
-            onClick={() => {
-              const nextMode = toolMode === 'draw' ? 'select' : 'draw';
-              setToolMode(nextMode);
-              if (nextMode === 'draw') setSelectedImageId(null);
-            }}
+            onClick={toggleDrawMode}
             style={toolButtonStyle}
           >
-            {toolMode === 'draw' ? 'Move images' : 'Draw'}
+            {toolMode === 'draw' ? (isMobile ? 'Pan canvas' : 'Move images') : 'Draw'}
           </button>
           <button type="button" onClick={() => fileInputRef.current?.click()} style={toolButtonStyle}>
             {uploadState === 'uploading' ? 'Uploading...' : 'Add image'}
@@ -835,7 +878,10 @@ function DrawPage() {
 
       <div
         ref={stageRef}
-        style={canvasStageStyle}
+        style={{
+          ...canvasStageStyle,
+          ...(isMobile ? mobileCanvasStageStyle : null),
+        }}
       >
         <canvas
           ref={canvasRef}
@@ -867,6 +913,8 @@ function DrawPage() {
             ...cursorSurfaceStyle,
             zIndex: 0,
             pointerEvents: toolMode === 'draw' ? 'none' : 'auto',
+            touchAction: toolMode === 'pan' ? 'auto' : 'none',
+            cursor: toolMode === 'pan' ? 'grab' : 'default',
           }}
         />
 
@@ -957,7 +1005,7 @@ function DrawPage() {
 
       <div style={footerStyle}>
         {participantCount} {participantCount === 1 ? 'user' : 'users'}
-        {` - ${toolMode === 'draw' ? 'draw mode' : 'move mode'}`}
+        {` - ${toolMode === 'draw' ? 'draw mode' : toolMode === 'pan' ? 'pan mode' : 'move mode'}`}
         {connectionState !== 'connected' && ' - reconnecting...'}
         {uploadState !== 'idle' && ` - ${uploadState}`}
       </div>
@@ -1007,6 +1055,13 @@ const settingsToggleStyle = {
   fontSize: '0.75rem',
   fontWeight: 700,
   boxShadow: '0 2px 10px rgba(0,0,0,0.15)',
+};
+
+const mobileDrawToggleStyle = {
+  ...settingsToggleStyle,
+  right: '86px',
+  background: '#2f62cc',
+  color: '#fff',
 };
 
 const settingsDrawerStyle = {
@@ -1139,6 +1194,15 @@ const canvasStageStyle = {
   inset: 0,
   background: '#fff',
   touchAction: 'none',
+};
+
+const mobileCanvasStageStyle = {
+  inset: 'auto',
+  top: 0,
+  left: 0,
+  width: `${MOBILE_BOARD_WIDTH}px`,
+  height: `${MOBILE_BOARD_HEIGHT}px`,
+  touchAction: 'auto',
 };
 
 const canvasStyle = {
